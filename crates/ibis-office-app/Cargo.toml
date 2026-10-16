@@ -19,6 +19,7 @@ ibis-doc-model.workspace = true
 ibis-pptx.workspace = true
 ibis-emf.workspace = true
 ibis-eot.workspace = true
+ibis-vba = { path = "../ibis-vba" }
 gpui-kit.workspace = true
 lyon_tessellation = "1.0"
 log = "0.4"
@@ -31,7 +32,6 @@ harfrust = "=0.5.2"
 # support, which also turns on GPUI's entity leak tracking (a small cost).
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 gpui-pre-platform = { version = "=0.3.6", features = ["test-support"], optional = true }
-image = { version = "0.25", default-features = false, features = ["png", "gif", "jpeg"], optional = true }
 miniz_oxide = { version = "0.8", optional = true }
 # Vector PDF export: pages as text, paths and images (MIT OR Apache-2.0).
 # Without its text shaping (the export hands it positioned glyphs); its
@@ -48,6 +48,10 @@ subsetter = { version = "=0.2.6", optional = true }
 # Automatic update (shell/update.rs): the log, paths and versions it shares with ibisOfficeUpdater.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 ibis-office-updater = { path = "../ibis-office-updater" }
+# The GIF export assembles drawn PNG pages into an animated GIF (on every
+# desktop platform where the export child program runs; the headless
+# renderer itself stays macOS/Windows-only above).
+image = { version = "0.25", default-features = false, features = ["png", "gif", "jpeg"], optional = true }
 
 # macOS only.
 [target.'cfg(target_os = "macos")'.dependencies]

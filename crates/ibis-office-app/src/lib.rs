@@ -442,6 +442,8 @@ pub(crate) fn open_window_with(cx: &mut App, setup: impl FnOnce(&mut SlideEditor
 /// ibisOffice [--slide <number>] [<file.pptx|file.xlsx|file.docx>]
 /// ibisOffice --export png|pdf|pdf-image [--out-dir <dir>] [--width <px>] [--slides 1,3-5] [--layout] <file.pptx|file.xlsx|file.docx>
 /// ibisOffice --export ui [--out-dir <dir>] [--steps start,pagedown,end] [<file.pptx|file.xlsx|file.docx>]
+/// ibisOffice --list-macros <file.xlsm|file.docm|file.pptm>
+/// ibisOffice --run-macro <Module.Sub> [--macro-out <file>] <file.xlsm>
 /// ibisOffice [--timing] [--quit-after-first-frame] [<file>]
 /// ```
 ///
@@ -492,6 +494,13 @@ struct Args {
     timing: bool,
     /// `--quit-after-first-frame`: quit once the window has been drawn.
     quit_after_first_frame: bool,
+    /// `--list-macros <file>`: print the VBA modules of the file and quit.
+    list_macros: Option<std::path::PathBuf>,
+    /// `--run-macro <name>`: run `name` (`Module.Sub` or `Sub`) headlessly
+    /// on the file given after it, saving a copy, and quit.
+    run_macro: Option<String>,
+    /// `--macro-out <file>`: where `--run-macro` writes its result.
+    macro_out: Option<std::path::PathBuf>,
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -522,6 +531,9 @@ fn parse_args() -> Result<Args, String> {
             "--steps" => args.steps = Some(value()?),
             "--timing" => args.timing = true,
             "--quit-after-first-frame" => args.quit_after_first_frame = true,
+            "--list-macros" => args.list_macros = Some(value()?.into()),
+            "--run-macro" => args.run_macro = Some(value()?),
+            "--macro-out" => args.macro_out = Some(value()?.into()),
             other if other.starts_with("--") => return Err(format!("unknown option: {other}")),
             _ => args.path = Some(arg.into()),
         }
@@ -788,6 +800,43 @@ pub fn run_native() {
             std::process::exit(2);
         }
     };
+    if let Some(path) = &args.list_macros {
+        match ibis_vba::read_modules(path) {
+            Ok(modules) => {
+                #[allow(clippy::print_stdout)]
+                for module in &modules {
+                    println!("{module:?}");
+                }
+                std::process::exit(0);
+            }
+            Err(err) => {
+                eprintln!("ibisOffice: {err}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if let Some(entry) = &args.run_macro {
+        let Some(path) = args.path.clone() else {
+            eprintln!("ibisOffice: --run-macro needs a .xlsm file");
+            std::process::exit(2);
+        };
+        let out = args.macro_out.clone().unwrap_or_else(|| {
+            let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+            let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "out".into());
+            dir.join(format!("{stem}-macro-run.xlsx"))
+        });
+        match ibis_vba::run_macro(&path, entry, &out) {
+            Ok(report) => {
+                eprintln!("ibisOffice: ran {entry}; sheets {:?}", report.sheets);
+                eprintln!("ibisOffice: saved {}", report.saved);
+                std::process::exit(0);
+            }
+            Err(err) => {
+                eprintln!("ibisOffice: {err}");
+                std::process::exit(1);
+            }
+        }
+    }
     if let Some(format) = &args.export {
         if let Err(err) = run_export(&args, format) {
             eprintln!("ibisOffice: {err}");

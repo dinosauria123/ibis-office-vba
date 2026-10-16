@@ -1,0 +1,12 @@
+[package]
+name = "ibis-vba"
+description = "VBA plugin for ibisOffice: macro source browsing and execution (data-processing macros), via ovba + elixcee."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+ovba = "0.7"
+zip = { version = "7", default-features = false, features = ["deflate"] }
+elixcee = { version = "=1.0.14", default-features = false }
