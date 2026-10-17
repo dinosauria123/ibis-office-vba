@@ -40,7 +40,7 @@ fn main() {
             })
             .collect();
         let out = std::env::temp_dir().join("ibis-probe-run.xlsx");
-        let session = ibis_vba::forms::run::FormSession { package: package.clone(), workbook: None };
+        let session = ibis_vba::forms::run::FormSession { package: package.clone(), workbook: None, save_back: false };
         match ibis_vba::forms::run::run_form_event(&session, &form, &event, &state, &out) {
             Ok(run) => {
                 println!("ran {event}");

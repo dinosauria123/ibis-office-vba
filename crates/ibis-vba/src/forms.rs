@@ -677,7 +677,15 @@ fn designer_fields(frame: &[u8]) -> (String, f32, f32) {
 
 /// One form's designer streams: the site table on `f` and each
 /// non-container control's record from its slice of `o`.
-fn parse_form(f_stream: &[u8], o_stream: &[u8], notes: &mut Vec<String>) -> Result<Vec<ControlDef>, String> {
+fn parse_form(
+    project: &ovba::Project,
+    storage: &str,
+    f_stream: &[u8],
+    o_stream: &[u8],
+    notes: &mut Vec<String>,
+    depth: usize,
+    used_storages: &mut std::collections::HashSet<String>,
+) -> Result<Vec<ControlDef>, String> {
     let mut r = Reader::new(f_stream);
     let v_lo = r.u8()?;
     let v_hi = r.u8()?;
@@ -690,6 +698,12 @@ fn parse_form(f_stream: &[u8], o_stream: &[u8], notes: &mut Vec<String>) -> Resu
     let mut pos = after_record;
     skip_form_stream_data(f_stream, &mut pos, mask)?;
     let sites = read_site_data(f_stream, pos)?;
+    if std::env::var_os("IBIS_DUMP_SITES").is_some() {
+        for site in &sites {
+            eprintln!("SITE {:?} id={} class={} olen={} pos={:?}", site.name, site.id, site.clsid_cache_index, site.object_stream_size, site.position);
+        }
+        eprintln!("O-LEN {} (sites {}) storage={}", o_stream.len(), sites.len(), storage);
+    }
 
     let total: usize = sites.iter().map(|s| s.object_stream_size).sum();
     if total != o_stream.len() {
@@ -704,7 +718,70 @@ fn parse_form(f_stream: &[u8], o_stream: &[u8], notes: &mut Vec<String>) -> Resu
     for site in &sites {
         let index = site.clsid_cache_index;
         if is_container_class(index) {
-            notes.push(format!("{} ({}): a container whose child storage is not built", site.name, kind_of(index)));
+            // A Frame's children live in their own storage beside the
+            // form's (`<form>/iNN/{f,o}`), as a FormControl of their
+            // own. Parse it recursively and shift the children into the
+            // frame; the frame itself shows as a box around them.
+            let (left, top) = site.position.unwrap_or((0, 0));
+            if depth < 12 {
+                let base = format!("/{storage}/");
+                // One container, one storage: the site's own ID names
+                // its storage (`i20` for id 20); a site without that
+                // match takes the next storage nobody claimed.
+                let subs = child_storages(project, &base, site.id);
+                let own = format!("i{site_id}", site_id = site.id);
+                let picked = subs
+                    .iter()
+                    .find(|s| **s == own && !used_storages.contains(*s))
+                    .or_else(|| subs.iter().find(|s| !used_storages.contains(*s)))
+                    .cloned();
+                let mut built = false;
+                if let Some(sub) = &picked {
+                    used_storages.insert(sub.clone());
+                }
+                for sub in picked.iter() {
+                    let child_f = project.read_stream(&format!("{base}{sub}/f"));
+                    let child_o = project.read_stream(&format!("{base}{sub}/o"));
+                    if let (Ok(child_f), Ok(child_o)) = (child_f, child_o) {
+                        match parse_form(project, &format!("{storage}/{sub}"), &child_f, &child_o, notes, depth + 1, used_storages) {
+                            Ok(children) => {
+                                let mut max_right = 0.0f32;
+                                let mut max_bottom = 0.0f32;
+                                for mut child in children {
+                                    child.left += himetric_px(left);
+                                    child.top += himetric_px(top);
+                                    max_right = max_right.max(child.left + child.width);
+                                    max_bottom = max_bottom.max(child.top + child.height);
+                                    controls.push(child);
+                                }
+                                controls.push(ControlDef {
+                                    name: site.name.clone(),
+                                    kind: kind_of(index),
+                                    left: himetric_px(left),
+                                    top: himetric_px(top),
+                                    width: (max_right - himetric_px(left) + 6.0).max(40.0),
+                                    height: (max_bottom - himetric_px(top) + 6.0).max(24.0),
+                                    caption: Some(site.name.clone()),
+                                    value: None,
+                                });
+                                built = true;
+                            }
+                            Err(e) => notes.push(format!("{}: its storage {}: {e}", site.name, sub)),
+                        }
+                    } else {
+                        notes.push(format!("{}: no child storage found", site.name));
+                    }
+                }
+                if !built {
+                    notes.push(format!("{} ({}): its children's storage did not parse", site.name, kind_of(index)));
+                }
+            } else {
+                notes.push(format!("{} ({}): nested too deep", site.name, kind_of(index)));
+            }
+            // The container's own record slice: a Frame carries none in
+            // the parent's `o` (its bytes are 0), but an id-carrying one
+            // may still hold a few.
+            offset += site.object_stream_size;
             continue;
         }
         if index >= CLASS_TABLE_BASE {
@@ -712,15 +789,32 @@ fn parse_form(f_stream: &[u8], o_stream: &[u8], notes: &mut Vec<String>) -> Resu
             offset += site.object_stream_size;
             continue;
         }
-        let slice = o_stream
-            .get(offset..offset + site.object_stream_size)
-            .ok_or_else(|| format!("{}: record walks out of `o`", site.name))?;
+        let slice = o_stream.get(offset..offset + site.object_stream_size).ok_or_else(|| {
+            if std::env::var_os("IBIS_DUMP_SITES").is_some() {
+                eprintln!("SLICE-FAIL {} offset={} size={} olen={}", site.name, offset, site.object_stream_size, o_stream.len());
+            }
+            format!("{}: record walks out of `o`", site.name)
+        })?;
         offset += site.object_stream_size;
 
         let spec = match spec_of(index) {
             Some(spec) => spec,
             None => {
-                notes.push(format!("{} ({}): not modelled", site.name, kind_of(index)));
+                // A class without a spec (an Image, a TabStrip...):
+                // the site's own position still places a placeholder,
+                // so the form's layout stays legible.
+                let (left, top) = site.position.unwrap_or((0, 0));
+                controls.push(ControlDef {
+                    name: site.name.clone(),
+                    kind: kind_of(index),
+                    left: himetric_px(left),
+                    top: himetric_px(top),
+                    width: 48.0,
+                    height: 24.0,
+                    caption: Some(site.name.clone()),
+                    value: None,
+                });
+                // The offset already advanced past this record.
                 continue;
             }
         };
@@ -743,6 +837,38 @@ fn parse_form(f_stream: &[u8], o_stream: &[u8], notes: &mut Vec<String>) -> Resu
         });
     }
     Ok(controls)
+}
+
+
+/// The child storages of a container site (`iNN` sub-storages of the
+/// form's storage, each carrying the container's `f`/`o`). The site's
+/// own ID names its storage when it matches one; the rest go in numeric
+/// order, so two frames read their own children.
+fn child_storages(project: &ovba::Project, base: &str, site_id: u32) -> Vec<String> {
+    let mut found: Vec<(u32, String)> = Vec::new();
+    if let Ok(list) = project.list() {
+        for (_name, path) in list {
+            let normalized = path.replace('\\', "/");
+            let Some(rest) = normalized.strip_prefix(base) else { continue };
+            // `iNN/f`: the storage `iNN` under the form's own.
+            let mut parts = rest.splitn(2, '/');
+            let sub = parts.next().unwrap_or("");
+            let leaf = parts.next().unwrap_or("");
+            if leaf == "f"
+                && sub.len() > 1
+                && sub.starts_with('i')
+                && sub[1..].chars().all(|c| c.is_ascii_digit())
+            {
+                let number: u32 = sub[1..].parse().unwrap_or(0);
+                if !found.iter().any(|(_, name)| name == sub) {
+                    found.push((number, sub.to_string()));
+                }
+            }
+        }
+    }
+    found.sort_by_key(|(number, _)| *number);
+    let _ = site_id;
+    found.into_iter().map(|(_, name)| name).collect()
 }
 
 /// Reads the UserForms of an OOXML package. A file with no forms answers
@@ -784,7 +910,8 @@ pub fn read_userforms(package_path: &std::path::Path) -> Result<Vec<UserFormDef>
         let f_stream = project.read_stream(&f_path).unwrap_or_default();
         let o_stream = project.read_stream(&o_path).unwrap_or_default();
         let mut controls = Vec::new();
-        match parse_form(&f_stream, &o_stream, &mut notes) {
+        let mut used_storages = std::collections::HashSet::new();
+        match parse_form(&project, &storage, &f_stream, &o_stream, &mut notes, 0, &mut used_storages) {
             Ok(found) => controls = found,
             Err(err) => notes.push(err),
         }
@@ -1036,5 +1163,49 @@ mod save_back_tests {
             "the package declares its VBA: {types}"
         );
         let _ = std::fs::remove_file(&work);
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn fixture() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test/benchmark/vba-demo-frames.xlsm")
+    }
+
+    /// A Frame's children live in their own `iNN` storages; the parser
+    /// walks them and shifts the children into the frame, so a
+    /// frame-heavy form keeps its whole layout.
+    #[test]
+    fn reads_the_children_of_frames() {
+        let forms = read_userforms(&fixture()).expect("forms");
+        let form = forms.iter().find(|f| f.name == "a_t_form").expect("a_t_form");
+        assert!(
+            form.notes.is_empty(),
+            "the frame-heavy form parses whole: {:?}",
+            form.notes
+        );
+        // The frame carries a box control named after it.
+        let frame = form.control("frame_transction_info").expect("the frame");
+        assert_eq!(frame.kind, "Frame");
+        // The frame's children ride inside it (their positions shifted
+        // by the frame's own).
+        let combo = form.control("cbo_how_long_data").expect("a frame child");
+        let frame_top = frame.top;
+        assert!(
+            combo.top >= frame_top,
+            "the child sits inside the frame: child top {} vs frame top {}",
+            combo.top,
+            frame_top
+        );
+        // Two frames: each read its own storage (no children twice).
+        let count = form
+            .controls
+            .iter()
+            .filter(|c| c.name == "cbo_how_long_data")
+            .count();
+        assert_eq!(count, 1, "no duplicated children");
     }
 }
