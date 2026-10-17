@@ -91,6 +91,14 @@ pub(crate) fn open_over(
             running: false,
             status: None,
         });
+        // The selected module's macro name goes into the entry at once.
+        let first = view.read(cx).modules.get(view.read(cx).selected)
+            .and_then(|m| first_sub(&m.name, &m.source));
+        if let Some(first) = first {
+            view.update(cx, |this, cx| {
+                this.entry.update(cx, |input, cx| input.set_value(first, window, cx));
+            });
+        }
         let focus = view.read(cx).focus.clone();
         focus.focus(window, cx);
         cx.new(|cx| Root::new(view, window, cx))
@@ -102,6 +110,23 @@ pub(crate) fn open(cx: &mut App) {
     let parent = cx.active_window().and_then(|w| w.update(cx, |_, window, cx| (window.bounds(), window.display(cx).map(|d| d.id()))).ok());
     let path = None;
     open_over(path, parent.map(|p| p.0), parent.and_then(|p| p.1), cx);
+}
+
+/// The name of the first `Sub` in a module's source (the entry the
+/// input fills with when the module is selected), as `Module.Sub`.
+fn first_sub(module_name: &str, source: &str) -> Option<String> {
+    for line in source.lines() {
+        let line = line.trim();
+        for head in ["Public Sub ", "Private Sub ", "Friend Sub ", "Sub "] {
+            if let Some(rest) = line.strip_prefix(head) {
+                let name = rest.split(['(', ' ']).next().unwrap_or_default();
+                if !name.is_empty() {
+                    return Some(format!("{module_name}.{name}"));
+                }
+            }
+        }
+    }
+    None
 }
 
 impl MacrosWindow {
@@ -216,8 +241,15 @@ impl Render for MacrosWindow {
                         .when(selected, |row| row.bg(rgb(0xe7ddff)))
                         .text_color(if selected { theme.foreground } else { theme.muted_foreground })
                         .child(format!("{} ({})", module.name, module.kind))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                        .on_click(cx.listener(move |this, _, window, cx| {
                             this.selected = index;
+                            if let Some(module) = this.modules.get(index)
+                                && let Some(entry) = first_sub(&module.name, &module.source)
+                            {
+                                this.entry.update(cx, |input, cx| {
+                                    input.set_value(entry, window, cx);
+                                });
+                            }
                             cx.notify();
                         })),
                 );
@@ -249,8 +281,9 @@ impl Render for MacrosWindow {
         if self.running {
             body = body.child(h_flex().w_full().gap_2().items_center().child(div().flex_1()).child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(i18n::text("macros.running"))));
         } else {
+            let cancel_run = || Button::new("macros-window-cancel").small().ghost().label(i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, window, _| window.remove_window()));
             let run = Button::new("macros-run").primary().small().label(i18n::text("macros.run")).disabled(self.modules.is_empty() || self.load_error.is_some()).on_click(cx.listener(|this, _, window, cx| this.run_clicked(window, cx)));
-            body = body.child(h_flex().w_full().gap_2().items_center().child(row).child(run));
+            body = body.child(h_flex().w_full().gap_2().items_center().child(row).child(run).child(cancel_run()));
         }
         if let Some((error, text)) = &self.status {
             let color = match error {
