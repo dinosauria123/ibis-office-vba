@@ -15,6 +15,43 @@
   <img src="asset/screenshots.png" alt="ibisOffice で開いた Word・Excel・PowerPoint の文書" width="100%">
 </p>
 
+## このフォークの拡張点
+
+このリポジトリは ibisOffice 0.8.1 のフォーク(dinosauria123/ibis-office-vba)で、2つの面を拡張しています。詳細: [`crates/ibis-vba/README.md`](crates/ibis-vba/README.md)
+
+### 1. Linux (Ubuntu) ビルド対応
+
+本家ツリーは macOS・Windows・ブラウザ専用で、ここに Linux のビルド対応を加えました。
+
+- `version.txt` に Linux 行を追加し、`crates/ibis-office-app/build.rs` に対応づけ(`gpui-kit` → `gpui-pre-platform` 経由で、Linux は公式の `gpui-pre-linux` クレートで描画: Wayland/X11 + wgpu/Vulkan)
+- GIF 書き出しパスの `image` 依存を、すべての非 wasm デスクトップ対象に拡大(ヘッドレスの PDF/PNG エクスポート自体は macOS/Windows 専用のまま。Linux では「cannot export」と明示)
+- Ubuntu 26.10 で動作確認: Wayland 上でウィンドウが開き、.docx/.xlsx/.pptx を描画
+
+ビルドに必要なパッケージ(Debian/Ubuntu):
+
+```sh
+sudo apt-get install -y pkg-config build-essential libxkbcommon-dev libxkbcommon-x11-dev \
+    libfontconfig1-dev libfreetype6-dev libvulkan-dev vulkan-tools
+cargo build --release
+# target/release/ibisOffice <ファイル>
+```
+
+### 2. VBA プラグイン(`crates/ibis-vba`)
+
+マクロ有効ファイル(.xlsm/.xlsb/.docm/.pptm)を開くときの仕様(マクロは実行せず、そのまま保持)は変えず、明示的なマクロ機能を 2つの MIT ライブラリの上に加えました。`ovba`([MS-OVBA] パーサ、100% safe Rust)と `elixcee`(決定的上限つきヘッドレス Excel VBA ランタイム)です。
+
+- **マクロの一覧(CLI と UI)**: `ibisOffice --list-macros <file>`、アプリ内の「ツール > マクロ…」で、VBA プロジェクトのモジュール(種別・ソース)を一覧
+- **ヘッドレス実行**: `ibisOffice --run-macro Module1.Sub [--macro-out result.xlsx] [--max-vba-instructions <n>] <file.xlsm>` — ワークブックのコピー上でデータ処理系 VBA を実行し、結果を保存(.xlsx/.xlsm/.ods)
+- **実行ウィンドウ**: ツール > マクロ… でモジュール一覧とソース(選択モジュールの最初の `Sub` を入力欄に自動入力)。実行の前には必ず警告バナーで確認し、ファイルを開いただけで何かが実行されることはありません
+- **スコープ**: 標準モジュールに加えて、ドキュメント(ホストイベント)とクラスモジュールが elixcee の範囲で実行に参加。コンパイルできないモジュールはその理由つきで読み飛ばし。Word/PowerPoint のオブジェクトモデル、UI 操作、COM(`CreateObject` などシェル系)は対応外 — VM が外部副作用を拒否し、実行は必ず上限つき(既定 1,000万命令)
+
+### 補足
+
+- ライセンスはそのまま(AGPL-3.0、`COMMERCIAL-LICENSE.md`)。追加した依存はすべて MIT(`deny.toml` のポリシーに沿う)
+- `NOTICE` の `POWERED_BY` とプロジェクトリンクの表示義務はこのフォークにも引き継がれます
+
+---
+
 ## ibisOffice とは
 
 ibisOffice は、Word・Excel・PowerPoint の文書を、表示し、編集し、保存するためのオフィス スイートです。すべてを Rust で書き、描画は GPU で行います。macOS・Windows のデスクトップでも、Web ブラウザでも、同じ 1 つのコードで動きます。

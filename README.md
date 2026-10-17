@@ -15,6 +15,43 @@
   <img src="asset/screenshots.png" alt="Word, Excel and PowerPoint documents open in ibisOffice" width="100%">
 </p>
 
+## What this fork adds
+
+This repository is a fork (dinosauria123/ibis-office-vba) that extends ibisOffice 0.8.1 in two areas. Details: [`crates/ibis-vba/README.md`](crates/ibis-vba/README.md).
+
+### 1. Linux (Ubuntu) build support
+
+The upstream tree only builds for macOS, Windows and the web. This fork adds:
+
+- A `Linux` line in `version.txt` and the mapping in `crates/ibis-office-app/build.rs` (through `gpui-kit` → `gpui-pre-platform`, Linux renders with the official `gpui-pre-linux` crate: Wayland/X11 UI + wgpu/Vulkan graphics).
+- The GIF export path's `image` dependency now compiles on non-wasm desktop targets (the headless PDF/PNG exporter itself remains macOS/Windows; Linux answers with a clear "cannot export" message).
+- Verified on Ubuntu 26.10: the window opens over Wayland and .docx/.xlsx/.pptx documents render.
+
+Build dependencies (Debian/Ubuntu):
+
+```sh
+sudo apt-get install -y pkg-config build-essential libxkbcommon-dev libxkbcommon-x11-dev \
+    libfontconfig1-dev libfreetype6-dev libvulkan-dev vulkan-tools
+cargo build --release
+# target/release/ibisOffice <file>
+```
+
+### 2. VBA plugin (`crates/ibis-vba`)
+
+Macros in .xlsm/.xlsb/.docm/.pptm stay untouched on open (as upstream), but this fork adds explicit macro features built on two MIT libraries — `ovba` ([MS-OVBA] parser, safe Rust) and `elixcee` (a bounded, headless Excel VBA runtime):
+
+- **マクロ一覧 per CLI and UI**: `ibisOffice --list-macros <file>`, and ツール > マクロ… in the app lists a project's modules with their kinds and source.
+- **Headless run**: `ibisOffice --run-macro Module1.Sub [--macro-out result.xlsx] [--max-vba-instructions <n>] <file.xlsm>` runs data-processing VBA on a copy of the workbook and saves the result (.xlsx/.xlsm/.ods).
+- **Window**: ツール > マクロ… shows the module list and source (the selected module's first `Sub` auto-fills the entry), asks a warning banner before anything runs, and never runs anything on file open.
+- **Scope**: standard, document (host events) and class modules join the run within elixcee's range; modules elixcee cannot compile are skipped with a note. Word/PowerPoint object models, UI automation and COM (`CreateObject`, shell) are out of scope — the VM refuses external effects, and every run is bounded (10,000,000 instructions by default).
+
+### Notes
+
+- Licensing is unchanged (AGPL-3.0, see `COMMERCIAL-LICENSE.md`); every added dependency is MIT (`deny.toml`'s policy).
+- `POWERED_BY`/project link requirements in `NOTICE` carry over to this fork.
+
+---
+
 ## What is ibisOffice?
 
 ibisOffice is an office suite for viewing, editing and saving Word, Excel and PowerPoint documents. It is written entirely in Rust and draws everything on the GPU. The same single codebase runs as a desktop app on macOS and Windows and in the web browser.
