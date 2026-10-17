@@ -9,13 +9,22 @@
 //! - `ovba` (tim-weis): a 100%-safe-Rust [MS-OVBA] parser. It extracts a
 //!   VBA project's modules and their source from `vbaProject.bin`.
 //! - `elixcee` (kent-tokyo): a headless Excel VBA runtime (its own VM,
-//!   deterministic instruction budget by default). It loads a workbook,
-//!   runs `Sub` entry points on its sheets, and saves the result.
+//!   deterministic budgets by default). It loads a workbook, runs `Sub`
+//!   entry points on its sheets, and saves the result.
 //!
-//! Scope intentionally mirrors elixcee's: common data-processing VBA
-//! (`If`/`For`/`Do`/`Select Case`/`With`, arrays, `Range`/`Cells`, worksheet
-//! functions) against .xlsx/.xlsm workbooks. Word/PowerPoint object models
-//! and UI automation are out of scope here.
+//! Scope mirrors elixcee's: common data-processing VBA (`If`/`For`/`Do`/
+//! `Select Case`/`With`, arrays, `Range`/`Cells`, worksheet functions)
+//! against .xlsx/.xlsm workbooks. Word/PowerPoint object models and UI
+//! automation are out of scope here.
+//!
+//! Module kinds: ovba's [MS-OVBA] MODULETYPE record only separates
+//! procedural modules from the document/class/designer umbrella. The
+//! umbrella is split heuristically by each module's `Attribute VB_Base`
+//! GUID, as [MS-OVBA] stores the host class a document module extends
+//! (Excel's Workbook `00020819`/Worksheet `00020820`/`00020821`, Word's
+//! `00020906`, PowerPoint's `91493462`) and VBA stores the generic
+//! `Object` base (`FCFB3D2A…`) for class modules. `ThisWorkbook` is
+//! always a document module.
 
 use std::io::Read;
 
@@ -30,17 +39,6 @@ pub struct VbaModule {
     pub kind: &'static str,
     /// The module's source code, decoded with the project's code page.
     pub source: String,
-}
-
-/// What a macro run left behind on the sheets and where.
-#[derive(Debug, Default)]
-pub struct RunReport {
-    /// Sheet names the VM saw (as read from the file).
-    pub sheets: Vec<String>,
-    /// The text `MsgBox`/`Debug.Print` produced, if any.
-    pub messages: Vec<String>,
-    /// Path the result workbook was written to.
-    pub saved: String,
 }
 
 /// Reads the VBA project of an OOXML package (`.xlsm`, `.docm`, `.pptm`…).
@@ -61,79 +59,134 @@ pub fn read_modules(package_path: &std::path::Path) -> Result<Vec<VbaModule>, St
         .map_err(|e| format!("cannot parse the VBA project ({VBA_PROJECT_PATH}): {e}"))?;
     let mut modules = Vec::with_capacity(project.modules.len());
     for module in &project.modules {
-        let kind = match module.module_type {
-            ovba::ModuleType::Procedural => "standard",
-            ovba::ModuleType::DocClsDesigner => "document",
-        };
         let source = project
             .module_source(&module.name)
             .map_err(|e| format!("cannot read the source of module {}: {e}", module.name))?;
+        let kind = match module.module_type {
+            ovba::ModuleType::Procedural => "standard",
+            ovba::ModuleType::DocClsDesigner => classify_doc_cls(&module.name, &source),
+        };
         modules.push(VbaModule { name: module.name.clone(), kind, source });
     }
     Ok(modules)
 }
 
-/// Extracts the modules that can run headlessly: standard code modules.
-/// Document/class/designer modules are named in `skipped` (with the reason
-/// elixcee's data-processing runtime cannot execute them here).
-fn runnable_source(
+/// Splits ovba's document/class/designer umbrella by the module's
+/// `Attribute VB_Base` GUID; see the crate documentation. `class` is the
+/// fallback: data-processing macros lose little from a guessed class, but
+/// a document module's host events matter to the run.
+fn classify_doc_cls(name: &str, source: &str) -> &'static str {
+    if name.eq_ignore_ascii_case("ThisWorkbook") {
+        return "document";
+    }
+    // The bases the hosts name: Excel's Workbook (00020819) and
+    // Worksheet (00020820/21), Word's Document (00020906/07),
+    // PowerPoint's Presentation (91493462). VBA's generic class base
+    // (FCFB3D2A…, the Object class) names every plain class module.
+    let host_bases = ["00020819", "00020820", "00020821", "00020906", "00020907", "91493462"];
+    let Some(line) = source.lines().find(|l| l.trim_start().starts_with("Attribute VB_Base")) else {
+        return "class";
+    };
+    match line.split('{').nth(1).map(|guid| guid.chars().take(8).collect::<String>().to_ascii_uppercase()) {
+        Some(base) if host_bases.contains(&base.as_str()) => "document",
+        _ => "class",
+    }
+}
+
+/// Compiles every module that can run: standard modules as they are,
+/// class modules marked as classes (elixcee's field reclassification,
+/// as its own CLI does for `.cls` files), and document modules so their
+/// host events (`Workbook_Open`, `Worksheet_Change`...) are found. A
+/// module elixcee cannot compile does not stop the run; it is reported
+/// (with its reason) in the run's `skipped` instead.
+fn compile_all(
     package_path: &std::path::Path,
-) -> Result<(Vec<(String, String)>, Vec<String>), String> {
+) -> Result<(Vec<(String, elixcee::parser::ast::Program)>, Vec<String>), String> {
     let modules = read_modules(package_path)?;
     if modules.is_empty() {
         return Err("the file has no VBA project (no macros were stored in it)".into());
     }
-    let mut runnable = Vec::new();
-    let mut skipped = Vec::new();
+    let (mut programs, mut skipped) = (Vec::new(), Vec::new());
     for module in modules {
-        if module.kind == "standard" {
-            runnable.push((module.name, module.source));
-        } else {
-            skipped.push(module.name);
+        let compiled = elixcee::parser::parse(&module.source).map(|mut program| {
+            if module.kind == "class" {
+                // elixcee's parser cannot tell classes from standard
+                // modules (the stream form has no header): mark them and
+                // give the instances their fields, as the elixcee CLI
+                // does for exported `.cls` files.
+                program.is_class_module = true;
+                let mut fields = program.module_variables;
+                program.module_variables = Default::default();
+                program.class_fields.append(&mut fields);
+            }
+            (module.name.to_lowercase(), program)
+        });
+        match compiled {
+            Ok(compiled) => programs.push(compiled),
+            Err(reason) => skipped.push(format!("{} {}", module.kind, module.name)),
         }
     }
-    Ok((runnable, skipped))
+    Ok((programs, skipped))
 }
 
-/// Runs `entry` ("SubName" or "Module.SubName") inside `elm.excee`'s VM,
-/// operating on a copy of the workbook and writing the result to
-/// `output_path` (`.xlsx`, `.xlsm` or `.ods`). No window is opened.
-///
-/// The run is bounded by elixcee's deterministic budgets (instruction
-/// count, call depth, string/array/cell sizes), and blocked external
-/// effects (`CreateObject`, file/shell access, `Save`/`Close`) are refused
-/// by the VM itself.
+/// What a macro run left behind on the sheets and where.
+#[derive(Debug, Default)]
+pub struct RunReport {
+    /// Sheet names the VM saw (as read from the file).
+    pub sheets: Vec<String>,
+    /// The text `MsgBox`/`Debug.Print` produced, if any.
+    pub messages: Vec<String>,
+    /// The modules the run went on without: those elixcee could not compile.
+    pub skipped: Vec<String>,
+    /// Path the result workbook was written to.
+    pub saved: String,
+}
+
+/// A run's default instruction budget: elixcee's own deterministic
+/// default. `--max-vba-instructions` (and the UI) pass what the user says.
+pub const DEFAULT_MAX_VBA_INSTRUCTIONS: Option<u64> = Some(elixcee::vm::DEFAULT_MAX_VBA_INSTRUCTIONS);
+
+/// Runs `entry` ("SubName" or "Module.SubName") inside elixcee's VM on a
+/// copy of the workbook, writing the result to `output_path` (`.xlsx`,
+/// `.xlsm` or `.ods`). No window is opened. The run may not exceed
+/// elixcee's default instruction budget; pass another budget (or `None`
+/// for an unbounded, trusted run) via [`run_macro_bounded`].
 pub fn run_macro(
     package_path: &std::path::Path,
     entry: &str,
     output_path: &std::path::Path,
 ) -> Result<RunReport, String> {
-    let (runnable, skipped) = runnable_source(package_path)?;
-    if runnable.is_empty() {
-        return Err(
-            "no standard module was found: document and class modules cannot run headlessly"
-                .into(),
-        );
-    }
-    // Parse each module independently; the error names the module.
-    let mut parsed: Vec<(String, elixcee::parser::ast::Program)> = Vec::with_capacity(runnable.len());
-    for (name, source) in &runnable {
-        let program = elixcee::parser::parse(source)
-            .map_err(|e| format!("VBA of module {name} does not compile: {e}"))?;
-        parsed.push((name.clone(), program));
+    run_macro_bounded(package_path, entry, output_path, DEFAULT_MAX_VBA_INSTRUCTIONS)
+}
+
+/// [`run_macro`] with a caller-set instruction budget: `Some(n)` caps one
+/// run at `n` instructions, `None` removes the cap for a trusted,
+/// long-running macro. The VM still refuses external effects
+/// (`CreateObject`, shell and file access, `Save`/`Close`) either way.
+pub fn run_macro_bounded(
+    package_path: &std::path::Path,
+    entry: &str,
+    output_path: &std::path::Path,
+    max_instructions: Option<u64>,
+) -> Result<RunReport, String> {
+    let (programs, skipped) = compile_all(package_path)?;
+    if programs.is_empty() {
+        return Err(match skipped.first() {
+            Some(first) => format!("no module could run (first failure: {first})"),
+            None => "no module could run".into(),
+        });
     }
     let mut vm = elixcee::vm::Vm::new();
-    vm.max_instructions = None; // the caller named this macro explicitly
+    vm.max_instructions = max_instructions;
     let sheets = vm
         .load_workbook_file(&package_path.display().to_string())
         .map_err(|e| format!("cannot load the workbook for VBA: {e}"))?;
-    vm.run_sub_multi(&parsed, entry)
+    vm.run_sub_multi(&programs, entry)
         .map_err(|e| format!("the macro failed: {e}"))?;
     let messages = [vm.take_messages(), vm.take_debug_output()].concat();
     elixcee::save_workbook(&vm, &output_path.display().to_string())
         .map_err(|e| format!("cannot save the result: {e}"))?;
-    let _ = skipped;
-    Ok(RunReport { sheets, messages, saved: output_path.display().to_string() })
+    Ok(RunReport { sheets, messages, skipped, saved: output_path.display().to_string() })
 }
 
 #[cfg(test)]

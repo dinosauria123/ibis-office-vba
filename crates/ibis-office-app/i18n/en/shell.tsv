@@ -712,3 +712,18 @@ _shell.close-slide-master-view-and-notes-formatting-bef	Close Slide Master View 
 _shell.could-not-create-the-gif	Could not create the GIF.
 _shell.exporting-png	Exporting PNG…
 _shell.exporting-gif	Exporting GIF…
+tools.macros	Macros…
+macros.open-a-file	Open a file to list its macros
+macros.no-file	No file is open
+macros.warning	Warning: macros can harm your computer. Run only macros from a source you trust.
+macros.confirm-run	Run this macro?
+macros.yes-run	Run
+macros.run	Run…
+macros.run-label	Macro name
+macros.entry-placeholder	Module1.BuildReport
+macros.enter-an-entry	Enter a macro name (Module.Sub)
+macros.running	Running…
+macros.done	Ran: {path}
+macros.skipped	{count} module(s) did not compile and were skipped
+macros.modules	Modules
+macros.source	Source

@@ -710,3 +710,18 @@ _shell.close-slide-master-view-and-notes-formatting-bef	スライド マスタ�
 _shell.could-not-create-the-gif	GIF を作れませんでした
 _shell.exporting-png	PNG に書き出しています…
 _shell.exporting-gif	GIF に書き出しています…
+tools.macros	マクロ…
+macros.open-a-file	マクロを一覧するにはファイルを開いてください
+macros.no-file	ファイルが開かれていません
+macros.warning	警告: マクロはコンピュータに害を与える可能性があります。出所を信頼できるマクロだけを実行してください。
+macros.confirm-run	このマクロを実行してもよろしいですか?
+macros.yes-run	実行する
+macros.run	実行…
+macros.run-label	マクロ名
+macros.entry-placeholder	Module1.BuildReport
+macros.enter-an-entry	マクロ名 (Module.Sub) を入力してください
+macros.running	実行中…
+macros.done	実行しました: {path}
+macros.skipped	{count} 個のモジュールはコンパイルできず読み飛ばしました
+macros.modules	モジュール
+macros.source	ソース

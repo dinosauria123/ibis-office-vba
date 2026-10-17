@@ -24,13 +24,26 @@
 target/release/ibisOffice --list-macros book.xlsm
 
 # ② ヘッドレス実行(Module1 の BuildReport を実行 → book-macro-run.xlsx に結果を保存)
+#    命令数上限は既定で elixcee の決定的上限(約1,000万命令)
 target/release/ibisOffice --run-macro Module1.BuildReport book.xlsm
 
-# ③ 出力先を指定
-target/release/ibisOffice --run-macro BuildReport --macro-out result.xlsx book.xlsm
+# ③ 出力先と命令数上限を指定
+target/release/ibisOffice --run-macro BuildReport --macro-out result.xlsx \
+    --max-vba-instructions 1000000 book.xlsm
 ```
 
-記法は `Sub名` または `Module名.Sub名` です(`--run-macro` の検索対象は標準モジュール)。
+記法は `Sub名` または `Module名.Sub名` です(検索対象は標準モジュールと
+クラス/ドキュメントモジュールのイベント)。
+
+## UI(ツール > マクロ…)
+
+エディタの **ツール > マクロ…** メニューから、開いているファイルのマクロ一覧が
+開きます。モジュールのクリックでソースを表示し、`実行` でヘッドレス実行します。
+
+- 実行は例外なく **確認バナーを経由します**。最初の `実行…` で
+  「このマクロを実行してもよろしいですか?」を出し、確認で初めて実行します
+- 実行は `ibis-vba` と同一の VM / 予算で行われ、`結果は <stem>-macro-run.xlsx` に
+  保存されます(ウィンドウは開いたまま結果とエラーを戻します)
 
 ## 使い方(Rust API)
 
@@ -63,14 +76,19 @@ println!("sheets: {:?}", report.sheets);   // 書込先: report.saved
 
 - `If` / `For` / `Do` / `Select Case` / `With`、配列、ワークシート関数
 - `Range` / `Cells` 、複数シート参照
+- **標準モジュールに加えて、ドキュメントモジュール(イベント)とクラスモジュール**:
+  取り入れた分の中で elixcee が解釈できる範囲(`Workbook_Open` /
+  `Worksheet_Change` 等)は実行に参加します。1つでも解釈できないモジュールが
+  あると、そのモジュールを読み飛ばして実行は続行し、理由がReport `skipped` や
+  CLIのログに記録されます
 - 保存: 同じ形式 (`.xlsx` / `.xlsm` / `.ods`) で出力
 
 ### 非対応
 
 - `Word`/`PowerPoint` の Application オブジェクトモデル(ドキュメント/スライドの COM 自動化)
-- UserForm の表示、UI 操作(Select 例外、MsgBox や MsgBox のボタン操作を含む)
-- 添付型 COM オブジェクト(`CreateObject`、シェル/ファイルシステム操作、外部 DLL)
-- ドキュメント/クラス/デザイナモジュールの実行(ソース閲覧は可能、`--list-macros` 参照)
+- UserForm の表示、UI 操作(Select を含む アニメーション等)
+- 添付型 COM オブジェクト(`CreateObject`、シェル/ファイルシステム操作、DLL)
+- elixcee が解釈できない構文のモジュール(読み飛ばされる。一覧は閲覧可能)
 
 未対応の操作を書いたマクロを実行したときは、elixcee が明示的にエラー名を提示します
 (黙ってゼロや `#NAME?` を返すことはありません)。
@@ -81,11 +99,14 @@ VBA マクロは任意コード実行の載も持つため、以下の設計に�
 
 - **実行は明示的なユーザーアクションのみ** — `--run-macro` コマンドで直接指定されたとき
   (アプリウィンドウ内の自動起動・自動実行は存在しません)
+- **UIの確認バナー** — ツール > マクロ… での実行は、必ず
+  「このマクロを実行してもよろしいですか?」の確認を経ます
 - **サンドボックス** — elixcee の VM 側で、外部副作用操作 (`CreateObject` / シェル /
   ファイルシステム操作 / `Save` / `Close`) を拒否。命令数・呼び出し深さ・文字列 /
-  配列 / セル数に既定上限が設定されます (Rust API で `vm.max_instructions = None` に
-  すると上限なしにできます)。`run_macro` では上限なしにしていますが、将来的には
-  `ibisOffice` 側の設定へ移す予定です
+  配列 / セル数に既定上限が設定されます
+- **命令数上限の設定** — 既定では elixcee の決定的上限 (1,000万命令) です。
+  CLI では `--max-vba-instructions <n>` で変更(または `0` で無制限扱い)できます。
+  ランタイムAPIは [`run_macro_bounded`](#使い方rust-api) に `Option<u64>` を渡します
 
 マクロの状態を格納したファイルを開くだけで何かが実行されることはありません。
 

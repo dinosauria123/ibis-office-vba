@@ -501,6 +501,18 @@ struct Args {
     run_macro: Option<String>,
     /// `--macro-out <file>`: where `--run-macro` writes its result.
     macro_out: Option<std::path::PathBuf>,
+    /// `--max-vba-instructions <n>`: the instruction budget of one
+    /// `--run-macro` run (elixcee's deterministic default by default).
+    max_vba_instructions: Option<u64>,
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl Args {
+    /// `--max-vba-instructions` for `--run-macro`: the number the user
+    /// named, or elixcee's deterministic default (every run is bounded).
+    fn max_vba_instructions_or_default(&self) -> Option<u64> {
+        self.max_vba_instructions.or(ibis_vba::DEFAULT_MAX_VBA_INSTRUCTIONS)
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -534,6 +546,7 @@ fn parse_args() -> Result<Args, String> {
             "--list-macros" => args.list_macros = Some(value()?.into()),
             "--run-macro" => args.run_macro = Some(value()?),
             "--macro-out" => args.macro_out = Some(value()?.into()),
+            "--max-vba-instructions" => args.max_vba_instructions = Some(value()?.parse().map_err(|_| "--max-vba-instructions needs a number of instructions".to_string())?),
             other if other.starts_with("--") => return Err(format!("unknown option: {other}")),
             _ => args.path = Some(arg.into()),
         }
@@ -825,9 +838,12 @@ pub fn run_native() {
             let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "out".into());
             dir.join(format!("{stem}-macro-run.xlsx"))
         });
-        match ibis_vba::run_macro(&path, entry, &out) {
+        match ibis_vba::run_macro_bounded(&path, entry, &out, args.max_vba_instructions_or_default()) {
             Ok(report) => {
                 eprintln!("ibisOffice: ran {entry}; sheets {:?}", report.sheets);
+                for skipped in &report.skipped {
+                    eprintln!("ibisOffice: skipped {skipped}");
+                }
                 eprintln!("ibisOffice: saved {}", report.saved);
                 std::process::exit(0);
             }
