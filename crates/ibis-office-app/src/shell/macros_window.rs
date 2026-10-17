@@ -151,9 +151,10 @@ fn subs_of(module_name: &str, source: &str) -> Vec<String> {
                 let name = rest.split(['(', ' ', '\t']).next().unwrap_or_default();
                 // Subs with parameters cannot run as entry points (the
                 // events; the caller supplies their arguments): stay out.
+                // `BuildReport()` (nothing between the parentheses) can.
                 let parametered = rest
                     .find('(')
-                    .is_some_and(|open| rest[open..].split_once(')').map_or(true, |(args, _)| !args.trim().ends_with("ByRef") && !args.trim().is_empty()));
+                    .is_some_and(|open| rest[open + 1..].chars().take_while(|c| *c != ')').any(|c| !c.is_whitespace()));
                 if !name.is_empty() && !parametered {
                     found.push(format!("{module_name}.{name}"));
                 }
@@ -354,3 +355,28 @@ impl Render for MacrosWindow {
 
 #[allow(unused)]
 fn unused(_: Rc<()>) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn subs_of_finds_parameterless_subs() {
+        let source = "Attribute VB_Name = \"Module1\"\r\nOption Explicit\r\n\r\nSub BuildReport()\r\n    Cells(1, 1).Value = 1\r\nEnd Sub\r\n\r\nPrivate Sub Hidden()\r\nEnd Sub\r\n";
+        assert_eq!(subs_of("Module1", source), vec!["Module1.BuildReport", "Module1.Hidden"]);
+    }
+
+    #[::core::prelude::v1::test]
+    fn subs_of_skips_parametered_subs() {
+        // The events: the caller supplies their arguments.
+        let source = "Sub Worksheet_Change(ByVal Target As Range)\r\nEnd Sub\r\n";
+        assert!(subs_of("Sheet1", source).is_empty());
+    }
+
+    #[::core::prelude::v1::test]
+    fn subs_of_indented_and_odd_signatures() {
+        // No-parenthesis Subs are legal VBA; elixcee will say if it cannot
+        // run one. The odd spacing (`Y ( )`) is not a parameter list.
+        assert_eq!(subs_of("M", "    Sub X()\nEnd Sub\nSub Y ( )\nEnd Sub\nSub NoParens\nEnd Sub"), vec!["M.X", "M.Y", "M.NoParens"]);
+    }
+}
