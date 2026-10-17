@@ -727,3 +727,5 @@ macros.done	Ran: {path}
 macros.skipped	{count} module(s) did not compile and were skipped
 macros.modules	Modules
 macros.source	Source
+macros.runs-on-disk	The run works on the file on disk; the result is saved as "<file>-macro-run.xlsx" in the same folder
+macros.open-result	Open the result

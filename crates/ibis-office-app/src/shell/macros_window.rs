@@ -20,6 +20,7 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Root, Sizable as _
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::shell::editor::SlideEditor;
 use crate::shell::i18n;
 
 thread_local! {
@@ -31,6 +32,11 @@ pub(crate) struct MacrosWindow {
     focus: FocusHandle,
     /// The open file the modules were read from (None or unreadable: a note).
     path: Option<PathBuf>,
+    /// The editor that opened the file: the 実行結果を開く button reloads
+    /// the output workbook in it (None: the app-menu path; the button hides).
+    editor: Option<WeakEntity<SlideEditor>>,
+    /// The window whose file the user came from (for opening the result in it).
+    parent: Option<AnyWindowHandle>,
     /// The modules read at open (`Arc` so the loaded list can move into
     /// the run task even if the window closes meanwhile).
     modules: Arc<Vec<ibis_vba::VbaModule>>,
@@ -46,12 +52,16 @@ pub(crate) struct MacrosWindow {
     running: bool,
     /// The result of the last run: whether it was an error, and its text.
     status: Option<(bool, SharedString)>,
+    /// The workbook of the last run, for 実行結果を開く.
+    result: Option<PathBuf>,
 }
 
 /// Open the macros window for the open file's VBA project (the file
 /// opened in the editor window the user is in; no file, a note).
 pub(crate) fn open_over(
     path: Option<PathBuf>,
+    editor: Option<WeakEntity<SlideEditor>>,
+    parent_window: Option<AnyWindowHandle>,
     parent: Option<Bounds<Pixels>>,
     display: Option<DisplayId>,
     cx: &mut App,
@@ -83,6 +93,8 @@ pub(crate) fn open_over(
         let view = cx.new(|cx| MacrosWindow {
             focus: cx.focus_handle(),
             path,
+            editor,
+            parent: parent_window,
             modules: Arc::new(modules),
             load_error: load_error.map(Into::into),
             selected: 0,
@@ -90,6 +102,7 @@ pub(crate) fn open_over(
             awaiting_confirmation: false,
             running: false,
             status: None,
+            result: None,
         });
         // The selected module's macro name goes into the entry at once.
         let first = view.read(cx).modules.get(view.read(cx).selected)
@@ -108,8 +121,7 @@ pub(crate) fn open_over(
 /// ツール > マクロ… (the app menu's, on macOS).
 pub(crate) fn open(cx: &mut App) {
     let parent = cx.active_window().and_then(|w| w.update(cx, |_, window, cx| (window.bounds(), window.display(cx).map(|d| d.id()))).ok());
-    let path = None;
-    open_over(path, parent.map(|p| p.0), parent.and_then(|p| p.1), cx);
+    open_over(None, None, None, parent.map(|p| p.0), parent.and_then(|p| p.1), cx);
 }
 
 /// The name of the first `Sub` in a module's source (the entry the
@@ -130,6 +142,20 @@ fn first_sub(module_name: &str, source: &str) -> Option<String> {
 }
 
 impl MacrosWindow {
+    /// 実行結果を開く: the output workbook of the last run (a file beside
+    /// the original) opens in the editor the user came from.
+    fn open_result(&self, cx: &mut Context<Self>) {
+        let (Some(result), Some(editor), Some(parent)) = (&self.result, self.editor.clone(), self.parent) else {
+            return;
+        };
+        let result = result.clone();
+        cx.defer(move |cx| {
+            let _ = parent.update(cx, |_, window, cx| {
+                let _ = editor.update(cx, |e, cx| e.open_path(result, None, window, cx));
+            });
+        });
+    }
+
     /// The file' the run reads (the workbook copy is ibis-vba's own).
     fn output_path(&self) -> Option<PathBuf> {
         let path = self.path.as_ref()?;
@@ -165,6 +191,7 @@ impl MacrosWindow {
             let result = finished.await;
             let _ = this.update(cx, |this, cx| {
                 this.running = false;
+                this.result = result.as_ref().ok().map(|_| out.clone());
                 this.status = Some(match result {
                     Ok(report) => {
                         let mut text = i18n::format("macros.done", &[("path", &report.saved)]);
@@ -192,7 +219,8 @@ impl Render for MacrosWindow {
             v_flex()
                 .gap_1()
                 .child(div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).child(i18n::text("tools.macros")))
-                .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(file.clone())),
+                .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(file.clone()))
+                .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(i18n::text("macros.runs-on-disk"))),
         );
         // Reading the project failed (no file, or it is one elixcee cannot read).
         if let Some(error) = &self.load_error {
@@ -290,7 +318,15 @@ impl Render for MacrosWindow {
                 false => theme.muted_foreground,
                 true => rgb(0xb3261e).into(),
             };
-            body = body.child(div().text_size(px(12.)).text_color(color).child(text.clone()));
+            let mut status_row = h_flex().w_full().gap_2().items_center();
+            status_row = status_row.child(div().text_size(px(12.)).flex_1().text_color(color).child(text.clone()));
+            // The result sits in its own file beside the original (the run
+            // cannot touch the currently-open editor state); the button
+            // opens it in the editor again.
+            if self.result.is_some() && self.editor.is_some() {
+                status_row = status_row.child(Button::new("macros-open-result").small().label(i18n::text("macros.open-result")).on_click(cx.listener(|this, _, _, cx| this.open_result(cx))));
+            }
+            body = body.child(status_row);
         }
         body
     }

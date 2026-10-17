@@ -725,3 +725,5 @@ macros.done	実行しました: {path}
 macros.skipped	{count} 個のモジュールはコンパイルできず読み飛ばしました
 macros.modules	モジュール
 macros.source	ソース
+macros.runs-on-disk	実行は、ディスク上のファイルに対して行われます(結果は、同じフォルダーの「<ファイル名>-macro-run.xlsx」に保存されます)
+macros.open-result	実行結果を開く
