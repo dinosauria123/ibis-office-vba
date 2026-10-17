@@ -738,3 +738,13 @@ macros.form-running	Form…
 macros.controls	Controls
 macros.note	{what} on this form
 macros.search-placeholder	Search macros and forms
+macros.name	Macro name (M):
+macros.r-location	Macros run in:
+macros.description	Description
+macros.step-into	Step Into (S)
+macros.edit-code	Edit (E)
+macros.create-new	Create (C)
+macros.delete-m	Delete (D)
+macros.options	Options (P)…
+macros.form-singular	Form
+macros.form-suffix	Form: {name}

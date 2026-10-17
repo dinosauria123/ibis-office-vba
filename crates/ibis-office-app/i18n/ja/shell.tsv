@@ -1,4 +1,4 @@
-# ibisOffice の UI の文字（日本語）：共通（shell）。キー<TAB>文字（shell/i18n.rs）。
+macros.name	# ibisOffice の UI の文字（日本語）：共通（shell）。キー<TAB>文字（shell/i18n.rs）。
 menu.file	ファイル
 menu.edit	編集
 menu.view	表示
@@ -736,3 +736,13 @@ macros.form-running	フォーム…
 macros.controls	コントロール
 macros.note	このフォームの{what}
 macros.search-placeholder	マクロとフォームを検索
+macros.r-location	マクロ名(M):
+macros.description	マクロの保存先(A):
+macros.step-into	説明
+macros.edit-code	ステップイン(S)
+macros.create-new	編集(E)
+macros.delete-m	作成(C)
+macros.options	削除(D)
+オプション(P)…
+macros.form-singular	フォーム
+macros.form-suffix	フォーム: {name}

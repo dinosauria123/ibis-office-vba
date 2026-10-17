@@ -270,7 +270,7 @@ impl Render for FormWindow {
                     )
                         .into_any_element()
                 }
-                "ListBox" => {
+                "ListBox" | "ComboBox" => {
                     // The plane's rows (the last run's list) and a
                     // double-click that runs the control's own
                     // `<Control>_DblClick`, when the module has one.

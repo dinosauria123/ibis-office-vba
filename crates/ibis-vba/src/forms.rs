@@ -314,6 +314,17 @@ fn read_site_data(data: &[u8], start: usize) -> Result<Vec<Site>, String> {
     Err("FormSiteData did not reconcile".into())
 }
 
+/// True when the bytes left after the sites are one trailing record
+/// (a version-stamped, length-prefixed one — a MultiPage's).
+fn is_trailing_record(data: &[u8], offset: usize) -> bool {
+    if offset + 4 > data.len() {
+        return false;
+    }
+    let version = (data[offset], data[offset + 1]);
+    let length = u16::from_le_bytes([data[offset + 2], data[offset + 3]]) as usize;
+    version == (0, 2) && offset + 4 + length == data.len()
+}
+
 fn try_site_data(data: &[u8], start: usize, with_table: bool) -> Result<Vec<Site>, String> {
     let mut r = Reader { data, pos: start };
     if with_table {
@@ -332,9 +343,10 @@ fn try_site_data(data: &[u8], start: usize, with_table: bool) -> Result<Vec<Site
         return Err("too many sites".into());
     }
     let end = r.pos + count_of_bytes;
-    // SiteData closes the stream; an exact end is the cheap proof that
-    // this layout is the real one.
-    if end != data.len() {
+    // SiteData closes the stream — or one trailing record follows (a
+    // MultiPage's own record after the form's, version-stamped and
+    // length-prefixed), which this checks rather than merely tolerating.
+    if end != data.len() && !is_trailing_record(data, end) {
         return Err("FormSiteData does not close the stream".into());
     }
     // SiteDepthsAndTypes: one entry per site, or one counted entry per
@@ -383,10 +395,9 @@ fn skip_form_stream_data(data: &[u8], pos: &mut usize, mask: u32) -> Result<(), 
 fn skip_guid_and_picture(data: &[u8], pos: &mut usize) -> Result<(), String> {
     let mut r = Reader { data, pos: *pos };
     r.skip(16)?; // GUID
-    r.skip(4); // preamble — read the length with its immediate
     r.skip(4)?; // the preamble word
     let len = r.u32()? as usize;
-    r.skip(len)?;
+    r.skip(len)?; // the bytes the preamble's own length says
     *pos = r.pos;
     Ok(())
 }
@@ -397,15 +408,21 @@ const GUID_TEXTPROPS: u32 = 0xAFC2_0920;
 
 fn skip_font_blob(data: &[u8], pos: &mut usize) -> Result<(), String> {
     let mut r = Reader { data, pos: *pos };
-    let guid = r.take(4)?;
+    // The full 16-byte GUID's first DWORD tells StdFont from TextProps
+    // ([MS-OFORMS] 2.4.6; the blob the fixture carries is a StdFont).
+    let guid = r.take(16)?;
     let tag = u32::from_le_bytes([guid[0], guid[1], guid[2], guid[3]]);
     match tag {
         GUID_STDFONT => {
-            r.skip(12 + 1)?; // version etc + the face-name byte
-            r.skip(16)?; // the rest of the GUID (forever 12 more bytes)
+            if r.u8()? != 0x01 {
+                return Err("unknown StdFont version in FormStreamData".into());
+            }
+            r.skip(2 + 1 + 2 + 4)?; // charset, flags, weight, height
+            let face = r.u8()? as usize;
+            r.skip(face)?;
         }
         GUID_TEXTPROPS => {
-            r.skip(2)?;
+            r.skip(2)?; // minor, major
             let cb = r.u16()? as usize;
             r.skip(cb)?;
         }
@@ -926,5 +943,42 @@ mod crud_tests {
         .expect("delete");
         let list3 = &run3.state.get("lbList").unwrap().list;
         assert_eq!(list3.len(), 3, "a row deleted: {list3:?}");
+    }
+}
+
+
+#[cfg(test)]
+mod combobox_tests {
+    use super::*;
+    use super::run::{FormSession, FormValue, run_form_event};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn fixture() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/benchmark/vba-demo-combobox-sheetnames.xlsm")
+    }
+
+    #[test]
+    fn fills_the_combobox_with_the_sheet_names() {
+        let package = fixture();
+        let forms = read_userforms(&package).expect("forms");
+        let form = &forms[0];
+        assert_eq!(form.name, "UserForm1");
+        let combo = form.control("ComboBox1").expect("the designer carries a ComboBox");
+        assert_eq!(combo.kind, "ComboBox");
+        let state: HashMap<String, FormValue> = form
+            .controls
+            .iter()
+            .map(|c| (c.name.clone(), FormValue::default()))
+            .collect();
+        let session = FormSession { package: package.clone(), workbook: None };
+        let out = std::env::temp_dir().join("ibis-vba-combobox-init.xlsx");
+        let run = run_form_event(&session, form, "UserForm_Initialize", &state, &out).expect("initialize");
+        let list = &run.state.get("ComboBox1").unwrap().list;
+        // The workbook carries 31 worksheets; the enumerated galleries
+        // fill the list (`For i = Count To 1 Step -1`).
+        assert_eq!(list.len(), 31, "the sheets fill the box: {list:?}");
+        assert!(list[0].contains("bmhp") || list[0].contains("obat"), "a real sheet name: {list:?}");
     }
 }

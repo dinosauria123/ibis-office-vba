@@ -45,6 +45,7 @@ cargo build --release
 - **ヘッドレス実行**: `ibisOffice --run-macro Module1.Sub [--macro-out result.xlsx] [--max-vba-instructions <n>] <file.xlsm>` — ワークブックのコピー上でデータ処理系 VBA を実行し、結果を保存(.xlsx/.xlsm/.ods)
 - **UserForm 対応(第一版)**: デザイナーストリーム([MS-OFORMS])からフォームを読み取り、ツール > マクロ… の「フォーム」から表示。開いたときに `UserForm_Initialize`、ボタンで `<Control>_Click` が動き、値は実行の内部平面を通って戻ります。Label/TextBox/CommandButton は配置どおりに描き、その他の種類は名前つきのプレースホルダです
 - **UserForm のListBox とListObject(第二版)**: フォーム変数経由のコントロール操作(`Set x = oForm`)、ListBox の `AddItem`/`Clear`/`List(r, c)`/`ListIndex`/`ListCount`、およびワークシートの ListObject テーブル(`ListRows.Add`/`.Range(n)`)を同じ内部平面で実行します。ListBox は最後の実行の行と選択行を表示し、行のダブルクリックで `<Control>_DblClick` を実行。Excel で作成した CRUD デモ(リストボックス ⇆ テーブル)がこの範囲で動きます
+- **UserForm のListBox・ComboBox(第三版)と、ホスト型マクロダイアログ**: マクロウィンドウをホストのダイアログ構成に合わせました — マクロ名の一覧(フォームを含む)と、両方を 1つの「実行」に統合(マクロなら実行して結果を開く、フォームならフォームウィンドウを開く)、保存先行、編集でのモジュールソース表示。デザイナーストリームの font blob(StdFont)/picture/MultiPage の後続レコードも読めるようになり、ComboBox がリスト平面に参加(スロットはコントロール毎)、`AddItem expr` は平面経由で追加、`Worksheets(i).Name` はセッションのシート名リストを読み、括弧の無いゼロ引数関数呼び出しには括弧を補う(標準モジュールは1つのスコープに統合してコンパイル)
 - **実行ウィンドウ**: ツール > マクロ… でモジュール一覧とソース。**実行できるマクロ名(`Sub`)をファイルから自動検索して、マクロ名の入力ボックス自体に一覧を統合**(検索つきプルダウン。選ぶとそのまま入力になります)。`実行して結果を表示` の 1 クリックで実行から結果をエディタで開くまで進みます。ファイルを開いただけで何かが実行されることはありません
 - **スコープ**: 標準モジュールに加えて、ドキュメント(ホストイベント)とクラスモジュールが elixcee の範囲で実行に参加。コンパイルできないモジュールはその理由つきで読み飛ばし。Word/PowerPoint のオブジェクトモデル、UI 操作、COM(`CreateObject` などシェル系)は対応外 — VM が外部副作用を拒否し、実行は必ず上限つき(既定 1,000万命令)
 
