@@ -746,3 +746,4 @@ macros.options	削除(D)
 オプション(P)…
 macros.form-singular	フォーム
 macros.form-suffix	フォーム: {name}
+forms.save-back	元ファイルに上書き保存

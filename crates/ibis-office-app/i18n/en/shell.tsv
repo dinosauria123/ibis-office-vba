@@ -748,3 +748,4 @@ macros.delete-m	Delete (D)
 macros.options	Options (P)…
 macros.form-singular	Form
 macros.form-suffix	Form: {name}
+forms.save-back	Save over the original

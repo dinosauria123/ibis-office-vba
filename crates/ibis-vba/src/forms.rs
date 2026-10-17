@@ -853,7 +853,7 @@ mod run_tests {
             "TextBox1".to_string(),
             FormValue { text: "typed in the box".into(), checked: false, list: Vec::new(), selected: None },
         );
-        let session = FormSession { package: package.clone(), workbook: None };
+        let session = FormSession { package: package.clone(), workbook: None, save_back: false };
         let output = std::env::temp_dir().join("ibis-vba-form-run.xlsx");
         let run = run_form_event(&session, form, "CommandButton1_Click", &state, &output)
             .expect("the click event runs");
@@ -872,7 +872,7 @@ mod run_tests {
             .iter()
             .map(|c| (c.name.clone(), FormValue::default()))
             .collect();
-        let session = FormSession { package: package.clone(), workbook: None };
+        let session = FormSession { package: package.clone(), workbook: None, save_back: false };
         let first = std::env::temp_dir().join("ibis-vba-form-init.xlsx");
         let run1 = run_form_event(&session, form, "UserForm_Initialize", &empty, &first)
             .expect("initialize");
@@ -882,7 +882,7 @@ mod run_tests {
             "{run1:#?}"
         );
         // The click on seeded state: workbook = the previous run's file.
-        let session2 = FormSession { package: package.clone(), workbook: Some(first) };
+        let session2 = FormSession { package: package.clone(), workbook: Some(first), save_back: false };
         let second = std::env::temp_dir().join("ibis-vba-form-click.xlsx");
         let run2 = run_form_event(&session2, form, "CommandButton1_Click", &run1.state, &second)
             .expect("click");
@@ -913,7 +913,7 @@ mod crud_tests {
             .map(|c| (c.name.clone(), FormValue::default()))
             .collect();
         // TableData at A4:C7: Mr/Louis, Mrs/Dion, Dr/Charles (3 rows).
-        let session = FormSession { package: package.clone(), workbook: None };
+        let session = FormSession { package: package.clone(), workbook: None, save_back: false };
         let out = std::env::temp_dir().join("ibis-vba-crud-init.xlsx");
         let run = run_form_event(&session, form, "UserForm_Initialize", &state, &out).expect("initialize");
         // Row 50+ probes (the list plane's cells):
@@ -927,14 +927,14 @@ mod crud_tests {
         state.insert("txtName".into(), FormValue { text: "Ada".into(), checked: false, list: list.clone(), selected: None });
         state.insert("txtAge".into(), FormValue { text: "39".into(), checked: false, list: list.clone(), selected: None });
         let out2 = std::env::temp_dir().join("ibis-vba-crud-create.xlsx");
-        let session = FormSession { package: package.clone(), workbook: Some(out.clone()) };
+        let session = FormSession { package: package.clone(), workbook: Some(out.clone()), save_back: false };
         let run2 = run_form_event(&session, form, "cmdCreate_Click", &state, &out2).expect("create");
         let list2 = &run2.state.get("lbList").unwrap().list;
         assert_eq!(list2.len(), 4, "a row added: {list2:?}");
         assert!(list2[3].contains("Ada"), "the new row's name: {list2:?}");
         // The Delete: one row off.
         let run3 = run_form_event(
-            &FormSession { package: package.clone(), workbook: Some(out2.clone()) },
+            &FormSession { package: package.clone(), workbook: Some(out2.clone()), save_back: false },
             form,
             "cmdDelete_Click",
             &run2.state,
@@ -972,7 +972,7 @@ mod combobox_tests {
             .iter()
             .map(|c| (c.name.clone(), FormValue::default()))
             .collect();
-        let session = FormSession { package: package.clone(), workbook: None };
+        let session = FormSession { package: package.clone(), workbook: None, save_back: false };
         let out = std::env::temp_dir().join("ibis-vba-combobox-init.xlsx");
         let run = run_form_event(&session, form, "UserForm_Initialize", &state, &out).expect("initialize");
         let list = &run.state.get("ComboBox1").unwrap().list;
@@ -980,5 +980,61 @@ mod combobox_tests {
         // fill the list (`For i = Count To 1 Step -1`).
         assert_eq!(list.len(), 31, "the sheets fill the box: {list:?}");
         assert!(list[0].contains("bmhp") || list[0].contains("obat"), "a real sheet name: {list:?}");
+    }
+}
+
+#[cfg(test)]
+mod save_back_tests {
+    use super::*;
+    use super::run::{FormSession, FormValue, run_form_event};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    /// The run with `save_back` replaces the original in place: the
+    /// cells carry the run's writes, and the file keeps its VBA
+    /// project (a macro-enabled workbook stays one).
+    #[test]
+    fn save_back_overwrites_the_original_keeping_vba() {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/benchmark/vba-userform-demo-crud.xlsm");
+        let work = std::env::temp_dir().join("ibis-vba-save-back-test.xlsm");
+        std::fs::copy(&source, &work).expect("copy the fixture");
+        let forms = read_userforms(&work).expect("forms");
+        let form = &forms[0];
+        let state: HashMap<String, FormValue> = form
+            .controls
+            .iter()
+            .map(|c| (c.name.clone(), FormValue::default()))
+            .collect();
+        let session = FormSession { package: work.clone(), workbook: None, save_back: true };
+        let out = std::env::temp_dir().join("ibis-vba-save-back-unused.xlsx");
+        let run = run_form_event(&session, form, "UserForm_Initialize", &state, &out).expect("initialize");
+        // The run reports the original as its file (the next run
+        // chains on the original, not a copy).
+        assert_eq!(run.file, work);
+        // The original was rewritten: it still opens as a macro
+        // workbook and keeps its VBA project and form.
+        let forms2 = read_userforms(&work).expect("the saved file reopens with its forms");
+        assert_eq!(forms2[0].name, "oUserForm");
+        let vba_present = {
+            let file = std::fs::File::open(&work).expect("open");
+            let mut archive = zip::ZipArchive::new(file).expect("zip");
+            archive.by_name("xl/vbaProject.bin").is_ok()
+        };
+        assert!(vba_present, "the VBA project survives the save-back");
+        // And the file is a macro-enabled workbook by its content type.
+        let file = std::fs::File::open(&work).expect("open");
+        let mut archive = zip::ZipArchive::new(file).expect("zip");
+        let mut types = String::new();
+        {
+            let mut entry = archive.by_name("[Content_Types].xml").expect("content types");
+            use std::io::Read as _;
+            entry.read_to_string(&mut types).expect("read");
+        }
+        assert!(
+            types.contains("sheet.macroEnabled.main+xml") && types.contains("vbaProject"),
+            "the package declares its VBA: {types}"
+        );
+        let _ = std::fs::remove_file(&work);
     }
 }

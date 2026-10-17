@@ -227,6 +227,10 @@ pub struct FormRun {
 pub struct FormSession {
     pub package: PathBuf,
     pub workbook: Option<PathBuf>,
+    /// Excel-style save: the run's result replaces the original file
+    /// (its VBA project stays; the plane rides along for chaining).
+    /// Off: the copy beside the original (`-form-run.xlsx`) takes it.
+    pub save_back: bool,
 }
 
 /// The scratch plane's row of each control: 2.., in the form's order.
@@ -1507,9 +1511,16 @@ pub fn run_form_event(
         }
         out_state.insert(name.clone(), value);
     }
-    elixcee::save_workbook(&vm, &output.display().to_string())
-        .map_err(|e| format!("cannot save the form run: {e}"))?;
-    Ok(FormRun { state: out_state, file: output.to_path_buf(), messages })
+    let file = if session.save_back {
+        crate::save_back_to_package(&session.package, &vm)
+            .map_err(|e| format!("cannot save over the original: {e}"))?;
+        session.package.clone()
+    } else {
+        elixcee::save_workbook(&vm, &output.display().to_string())
+            .map_err(|e| format!("cannot save the form run: {e}"))?;
+        output.to_path_buf()
+    };
+    Ok(FormRun { state: out_state, file, messages })
 }
 
 /// The workbook's ListObject range: the table's own xml carries the

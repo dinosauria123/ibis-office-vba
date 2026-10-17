@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Root, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -40,6 +41,10 @@ pub(crate) struct FormWindow {
     state: HashMap<String, ibis_vba::forms::FormValue>,
     /// The workbook the last run wrote (the plane across runs).
     workbook: Option<PathBuf>,
+    /// Excel-style save: the run's result replaces the original file
+    /// (its VBA project survives); off, the `-form-run.xlsx` copy takes
+    /// it, the original untouched.
+    save_back: bool,
     running: bool,
     status: Option<(bool, SharedString)>,
     /// The editor that opened the form (unused for the run itself; kept
@@ -118,6 +123,7 @@ pub(crate) fn open_form(
                     })
                     .collect(),
                 workbook: None,
+                save_back: false,
                 running: false,
                 status: None,
                 _editor: editor.clone(),
@@ -173,7 +179,7 @@ impl FormWindow {
         let workbook = self.workbook.clone();
         let event_marker = format!("'{event}' not found");
         let bounded = ibis_vba::forms::run::run_form_event(
-            &ibis_vba::forms::run::FormSession { package, workbook },
+            &ibis_vba::forms::run::FormSession { package, workbook, save_back: self.save_back },
             &form,
             event,
             &state,
@@ -365,6 +371,15 @@ impl Render for FormWindow {
                 .items_center()
                 .child(div().text_size(px(12.)).text_color(color).child(message))
                 .child(div().flex_1())
+                .child(
+                    Checkbox::new("form-save-back")
+                        .label(i18n::text("forms.save-back"))
+                        .checked(self.save_back)
+                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                            this.save_back = *checked;
+                            cx.notify();
+                        })),
+                )
                 .child(
                     Button::new("form-close")
                         .small()
