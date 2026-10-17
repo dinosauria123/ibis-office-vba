@@ -729,3 +729,8 @@ macros.runs-on-disk	実行は、ディスク上のファイルに対して行わ
 macros.open-result	実行結果を開く
 macros.run-and-open	実行して結果を表示
 macros.found	マクロ
+macros.forms	フォーム
+macros.form-open	フォームを表示
+macros.run-failed	実行に失敗しました
+macros.form-running	フォーム…
+macros.controls	コントロール

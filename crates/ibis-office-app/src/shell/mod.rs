@@ -24,6 +24,8 @@ pub(crate) mod update;
 pub(crate) mod about_window;
 pub(crate) mod macros_window;
 #[cfg(not(target_family = "wasm"))]
+pub(crate) mod forms_window;
+#[cfg(not(target_family = "wasm"))]
 pub(crate) mod password_window;
 pub(crate) mod icons;
 pub(crate) mod menu_bar;

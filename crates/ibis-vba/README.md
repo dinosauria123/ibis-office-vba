@@ -149,3 +149,21 @@ crates/ibis-vba/
 └── src/
     └── lib.rs   # read_modules / run_macro
 ```
+
+## UserForm(実行可能な程度: 第一版)
+
+`pyopenvba` や Excel で作った **UserForm 入りの `.xlsm`** を読み込めます
+(デザインストリーム `\x03VBFrame` / `f` / `o` を [MS-OFORMS] の表に沿って解析):
+
+- **フォームの一覧**: ツール > マクロ… に「フォーム (n)」が現れ、"フォームを表示" で
+  ウィンドウが開きます(位置・寸法はデザイナー値、96DPI px で変換)
+- **実行可能なイベント**: `UserForm_Initialize`(ウィンドウを開いたとき)、
+  `<Control>_Click`(フォーム上のボタンをクリック)
+- **値の受け渡し**: TextBox の内容は入力欄から読み取り、Label の Caption への
+  代入は実行後のフォームに反映されます。値の平面はワークブック内の
+  `__IbisCtl` シート(`ibis-vba` 内のVM平面、保存後に参照)
+- **書き換えの範囲**: `Control.Caption/Value/Text = …`、読み出し式の中の
+  `Control.Caption/Value/Text`、`UserForm1.Show` のみ — それ以外のプロパティ
+  (フォント/色/サイズなど)は「未対応」として名前つきで残り、コードは実行されます
+- その他のコントロール(Frame/MultiPage/ActiveX など)はフォーム上に
+  「名前 (種別)」のプレースホルダとして表示され、フォームの解析・実行は続行します

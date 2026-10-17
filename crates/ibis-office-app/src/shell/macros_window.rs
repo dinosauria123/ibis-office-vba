@@ -73,6 +73,10 @@ thread_local! {
 
 pub(crate) struct MacrosWindow {
     focus: FocusHandle,
+    /// The file's UserForms (designer data), for the フォーム button.
+    forms: Arc<Vec<ibis_vba::forms::UserFormDef>>,
+    /// What the forms read said when it failed.
+    forms_error: Option<SharedString>,
     /// The open file the modules were read from (None or unreadable: a note).
     path: Option<PathBuf>,
     /// The editor that opened the file: the 実行結果を開く button reloads
@@ -118,6 +122,12 @@ pub(crate) fn open_over(
         return;
     }
     let modules = path.as_deref().map(ibis_vba::read_modules);
+    let forms_loaded = path.as_deref().map(ibis_vba::forms::read_userforms);
+    let (forms, forms_error) = match forms_loaded {
+        Some(Ok(forms)) => (forms, None),
+        Some(Err(e)) => (Vec::new(), Some(e.into())),
+        None => (Vec::new(), None),
+    };
     let (modules, load_error) = match modules {
         Some(Ok(modules)) => (modules, None),
         Some(Err(e)) => (Vec::new(), Some(e.into())),
@@ -169,6 +179,8 @@ pub(crate) fn open_over(
                 path,
                 editor,
                 parent: parent_window,
+                forms: Arc::new(forms),
+                forms_error: forms_error,
                 modules: Arc::new(modules),
                 load_error: load_error.map(Into::into),
                 selected: 0,
@@ -300,6 +312,36 @@ impl Render for MacrosWindow {
                 .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(file.clone()))
                 .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(i18n::text("macros.runs-on-disk"))),
         );
+        // The forms read (when the file has any) and the button to show one.
+        if let Some(first) = self.forms.first() {
+            let package = self.path.clone();
+            let editor = self.editor.clone();
+            let form = first.clone();
+            body = body.child(
+                h_flex().w_full().gap_2().items_center()
+                    .child(div().text_size(px(12.)).flex_1().child(
+                        format!("{} ({})", i18n::text("macros.forms"), self.forms.len()),
+                    ))
+                    .when(self.forms_error.is_none(), |row| {
+                        row.child(
+                            Button::new("macros-open-form")
+                                .small()
+                                .label(i18n::text("macros.form-open"))
+                                .on_click(move |_, window, cx| {
+                                    let form = form.clone();
+                                    crate::shell::forms_window::open_form(
+                                        editor.clone(),
+                                        Some(window.bounds()),
+                                        window.display(cx).map(|d| d.id()),
+                                        package.clone().unwrap_or_default(),
+                                        form,
+                                        cx,
+                                    );
+                                }),
+                        )
+                    }),
+            );
+        }
         // Reading the project failed (no file, or it is one elixcee cannot read).
         if let Some(error) = &self.load_error {
             body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error.clone()));

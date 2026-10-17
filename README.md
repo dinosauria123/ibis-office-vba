@@ -43,6 +43,7 @@ Macros in .xlsm/.xlsb/.docm/.pptm stay untouched on open (as upstream), but this
 
 - **マクロ一覧 per CLI and UI**: `ibisOffice --list-macros <file>`, and ツール > マクロ… in the app lists a project's modules with their kinds and source.
 - **Headless run**: `ibisOffice --run-macro Module1.Sub [--macro-out result.xlsx] [--max-vba-instructions <n>] <file.xlsm>` runs data-processing VBA on a copy of the workbook and saves the result (.xlsx/.xlsm/.ods).
+- **UserForm support (first slice)**: forms are read from the designer streams ([MS-OFORMS]) and shown in a window (ツール > マクロ… → フォーム); `UserForm_Initialize` runs at open and `<Control>_Click` on its buttons; the values pass through the run's internal plane. Label/TextBox/CommandButton are laid out; other classes show as named placeholders.
 - **Window**: ツール > マクロ… shows the module list and source; the runnable macro names (`Sub`s) are **found in the file automatically** and offered inside the entry box itself (a type-to-search combobox of the found names). One 実行して結果を表示 click runs and opens the result workbook. Nothing ever runs on file open.
 - **Scope**: standard, document (host events) and class modules join the run within elixcee's range; modules elixcee cannot compile are skipped with a note. Word/PowerPoint object models, UI automation and COM (`CreateObject`, shell) are out of scope — the VM refuses external effects, and every run is bounded (10,000,000 instructions by default).
 

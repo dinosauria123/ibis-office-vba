@@ -731,3 +731,8 @@ macros.runs-on-disk	The run works on the file on disk; the result is saved as "<
 macros.open-result	Open the result
 macros.run-and-open	Run and open the result
 macros.found	Macros
+macros.forms	Forms
+macros.form-open	Show the form
+macros.run-failed	The run failed
+macros.form-running	Form…
+macros.controls	Controls

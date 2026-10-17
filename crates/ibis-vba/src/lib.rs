@@ -28,6 +28,8 @@
 
 use std::io::Read;
 
+pub mod forms;
+
 const VBA_PROJECT_PATH: &str = "xl/vbaProject.bin";
 
 /// One VBA module read out of a macro-enabled Office file.
