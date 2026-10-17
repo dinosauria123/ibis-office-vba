@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Root, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -40,6 +41,9 @@ pub(crate) struct MacrosWindow {
     /// The modules read at open (`Arc` so the loaded list can move into
     /// the run task even if the window closes meanwhile).
     modules: Arc<Vec<ibis_vba::VbaModule>>,
+    /// The runnable macro names found in the file (standard and document
+    /// modules' `Sub`s), for the マクロ名 dropdown.
+    entries: Arc<Vec<String>>,
     /// What reading the project said when it failed.
     load_error: Option<SharedString>,
     /// The module shown (an index into `modules`).
@@ -75,6 +79,13 @@ pub(crate) fn open_over(
         Some(Err(e)) => (Vec::new(), Some(e.into())),
         None => (Vec::new(), Some(i18n::text("macros.open-a-file"))),
     };
+    // The runnable names, found in the file: every `Sub` of the standard
+    // and document modules (`Module.Sub`), in the modules' order.
+    let entries: Vec<String> = modules
+        .iter()
+        .filter(|m| m.kind != "class")
+        .flat_map(|m| subs_of(&m.name, &m.source))
+        .collect();
     let (width, height) = (px(640.), px(520.));
     let bounds = match parent {
         Some(p) => Bounds::new(point(p.origin.x + (p.size.width - width) / 2.0, p.origin.y + (p.size.height - height) / 2.0), size(width, height)),
@@ -94,6 +105,7 @@ pub(crate) fn open_over(
             editor,
             parent: parent_window,
             modules: Arc::new(modules),
+            entries: Arc::new(entries),
             load_error: load_error.map(Into::into),
             selected: 0,
             entry: cx.new(|cx| InputState::new(window, cx).placeholder(i18n::text("macros.entry-placeholder"))),
@@ -101,9 +113,8 @@ pub(crate) fn open_over(
             status: None,
             result: None,
         });
-        // The selected module's macro name goes into the entry at once.
-        let first = view.read(cx).modules.get(view.read(cx).selected)
-            .and_then(|m| first_sub(&m.name, &m.source));
+        // The found macro names go into the entry at once: the first one.
+        let first = view.read(cx).entries.first().cloned();
         if let Some(first) = first {
             view.update(cx, |this, cx| {
                 this.entry.update(cx, |input, cx| input.set_value(first, window, cx));
@@ -124,18 +135,31 @@ pub(crate) fn open(cx: &mut App) {
 /// The name of the first `Sub` in a module's source (the entry the
 /// input fills with when the module is selected), as `Module.Sub`.
 fn first_sub(module_name: &str, source: &str) -> Option<String> {
+    subs_of(module_name, source).into_iter().next()
+}
+
+/// Every `Sub` name in a module's source, as `Module.Sub`: the entries a
+/// run can name (class modules' eventless Subs stay out: elixcee resolves
+/// entry points across standard and document modules only).
+fn subs_of(module_name: &str, source: &str) -> Vec<String> {
+    let mut found = Vec::new();
     for line in source.lines() {
         let line = line.trim();
         for head in ["Public Sub ", "Private Sub ", "Friend Sub ", "Sub "] {
             if let Some(rest) = line.strip_prefix(head) {
-                let name = rest.split(['(', ' ']).next().unwrap_or_default();
-                if !name.is_empty() {
-                    return Some(format!("{module_name}.{name}"));
+                let name = rest.split(['(', ' ', '\t']).next().unwrap_or_default();
+                // Subs with parameters cannot run as entry points (the
+                // events; the caller supplies their arguments): stay out.
+                let parametered = rest
+                    .find('(')
+                    .is_some_and(|open| rest[open..].split_once(')').map_or(true, |(args, _)| !args.trim().ends_with("ByRef") && !args.trim().is_empty()));
+                if !name.is_empty() && !parametered {
+                    found.push(format!("{module_name}.{name}"));
                 }
             }
         }
     }
-    None
+    found
 }
 
 impl MacrosWindow {
@@ -288,10 +312,27 @@ impl Render for MacrosWindow {
             body = body.child(h_flex().flex_1().min_h_0().gap_3().child(list).child(preview));
         }
 
-        // The entry point input, and one Run button (runs, then opens).
+        // The entry point input (the found names in a dropdown), and one
+        // Run button (runs, then opens).
         let mut row = h_flex().w_full().gap_2().items_center();
-        row = row.child(div().text_size(px(12.)).child(i18n::text("macros.run-label")));
-        row = row.child(Input::new(&self.entry).small().flex_1().disabled(self.running));
+        row = row.child(div().text_size(px(12.)).flex_shrink_0().child(i18n::text("macros.run-label")));
+        if self.entries.is_empty() {
+            row = row.child(Input::new(&self.entry).small().flex_1().disabled(self.running));
+        } else {
+            row = row.child(Input::new(&self.entry).small().flex_1().disabled(self.running));
+            // The found macro names; picking one fills the entry.
+            let entries = self.entries.clone();
+            let entry = self.entry.clone();
+            row = row.child(Button::new("macros-entries").small().label(format!("{} ({}{}", i18n::text("macros.found"), entries.len(), ")")).disabled(self.running).dropdown_menu(move |menu, _, _| {
+                entries.iter().fold(menu, |menu, name| {
+                    let (name, entry) = (name.clone(), entry.clone());
+                    menu.item(PopupMenuItem::new(name.clone()).on_click(move |_, window, cx| {
+                        entry.update(cx, |input, cx| input.set_value(name.clone(), window, cx));
+                        cx.refresh_windows();
+                    }))
+                })
+            }));
+        }
         if self.running {
             body = body.child(h_flex().w_full().gap_2().items_center().child(div().flex_1()).child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(i18n::text("macros.running"))));
         } else {
