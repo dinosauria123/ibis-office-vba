@@ -204,16 +204,23 @@ impl FormWindow {
 }
 
 impl Render for FormWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let mut body = v_flex()
-            .size_full()
-            .gap_2()
-            .p_4()
-            .bg(theme.background)
-            .text_color(theme.foreground)
-            .track_focus(&self.focus);
-        body = body.child(
+        // The decorations: when the WM drew no bar (its fallback), the
+        // window's own titlebar carries the drag and the buttons.
+        let mut body = v_flex().size_full().gap_0().bg(theme.background).text_color(theme.foreground).track_focus(&self.focus);
+        let mut panel = v_flex().flex_1().min_h_0().gap_2().p_4();
+        if let Some(bar) = crate::shell::chrome::floating_titlebar(
+            if self.form.caption.is_empty() {
+                self.form.name.clone().into()
+            } else {
+                self.form.caption.clone().into()
+            },
+            window,
+        ) {
+            panel = panel.child(bar);
+        }
+        panel = panel.child(
             h_flex()
                 .w_full()
                 .gap_2()
@@ -350,7 +357,7 @@ impl Render for FormWindow {
                 theme.muted_foreground,
             ),
         };
-        body = body.child(
+        panel = panel.child(
             h_flex()
                 .w_full()
                 .gap_2()
@@ -365,6 +372,7 @@ impl Render for FormWindow {
                         .on_click(cx.listener(|this, _, window, _| this.close(window))),
                 ),
         );
-        body
+        body = body.child(panel);
+    body
     }
 }

@@ -353,10 +353,17 @@ impl MacrosWindow {
 }
 
 impl Render for MacrosWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let mut body = v_flex().size_full().gap_2().p_4().bg(theme.background).text_color(theme.foreground).track_focus(&self.focus);
-
+        let mut body = v_flex().size_full().gap_0().bg(theme.background).text_color(theme.foreground).track_focus(&self.focus);
+        // The decorations: when the WM drew no bar (its fallback), the
+        // window's own bar carries the drag and the buttons; the run's
+        // panel then sits under it.
+        if let Some(bar) = crate::shell::chrome::floating_titlebar(i18n::text("tools.macros"), window) {
+            body = body.child(bar);
+        }
+        let mut panel = v_flex().flex_1().min_h_0().gap_2().p_4();
+        
         // The names list: the picker (searchable) over the plain rows,
         // beside the 実行 column — the host's dialog layout.
         let is_form_chosen = self.chosen.as_ref().is_some_and(|(_, f)| *f);
@@ -461,7 +468,7 @@ impl Render for MacrosWindow {
                     .child(source),
             );
         }
-        body = body.child(top).child(
+        panel = panel.child(top).child(
             v_flex().gap_1()
                 // The run's folder — the copy is saved beside the file.
                 .child(
@@ -519,7 +526,9 @@ impl Render for MacrosWindow {
                 .label(i18n::text("_shell.cancel"))
                 .on_click(cx.listener(|this, _, window, _| window.remove_window())),
         );
-        body.child(bottom)
+        panel = panel.child(bottom);
+        body = body.child(panel);
+        body
     }
 }
 

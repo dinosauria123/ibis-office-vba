@@ -497,10 +497,19 @@ fn titlebar_window_controls(window: &Window) -> Option<AnyElement> {
     )
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-fn titlebar_window_controls(_window: &Window) -> Option<AnyElement> {
-    None
+
+/// A floating dialog's own titlebar: client-decorated windows need it
+/// (the WM draws no bar of its own), the app's main title row already
+/// covers the editor. The bar carries the drag (the pointer's move on
+/// a pressed bar tells the platform) and the window's controls.
+pub(crate) fn floating_titlebar(title: SharedString, window: &Window) -> Option<AnyElement> {
+    use gpui_kit::component::TitleBar;
+    if !matches!(window.window_decorations(), Decorations::Client { .. }) {
+        return None;
+    }
+    Some(TitleBar::new().child(div().text_size(px(12.)).child(title)).into_any_element())
 }
+
 
 fn listener(editor: &WeakEntity<SlideEditor>, handler: &Handler) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     let (editor, handler) = (editor.clone(), handler.clone());
@@ -645,6 +654,7 @@ impl SlideEditor {
         let row = h_flex().h(px(36.)).flex_shrink_0().pl(px(14.)).pr(px(12.)).gap(px(8.)).items_center().bg(rgb(APP_BG)).text_color(rgb(TEXT));
         if !self.has_document {
             // The start view: the app's logo (開く and 新規作成 are in the view).
+            let row = row.window_control_area(gpui_kit::WindowControlArea::Drag);
             return row
                 .child(img(app_logo()).h(px(LOGO_HEIGHT)).w(px(LOGO_HEIGHT * LOGO_ASPECT)))
                 .child(div().flex_1())
@@ -696,6 +706,7 @@ impl SlideEditor {
                     &editor,
                 ))
         };
+        let row = row.window_control_area(gpui_kit::WindowControlArea::Drag);
         let slideshow = self.pages_are_slides().then(|| self.render_slideshow_button(&editor, cx));
         row.child(fill_icon(app_icon, 24.0, rgb(app_color).into()))
             .child(
