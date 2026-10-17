@@ -27,6 +27,7 @@ log = "0.4"
 # version GPUI's tree already has (MIT): HarfBuzz in Rust, reading the
 # font's kern table and GPOS pair adjustments.
 harfrust = "=0.5.2"
+lsp-types = { version = "0.97.0", features = ["proposed"] }
 
 # For the `export` feature: GPUI's headless renderer is part of its test
 # support, which also turns on GPUI's entity leak tracking (a small cost).

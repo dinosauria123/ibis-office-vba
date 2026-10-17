@@ -16,13 +16,55 @@ use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Root, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::searchable_list::SearchableListItem as _;
+use gpui_kit::component::select::{Select, SelectEvent, SelectState};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, IndexPath, Root, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::shell::editor::SlideEditor;
 use crate::shell::i18n;
+
+/// One macro the dropdown offers (a `Module.Sub` entry point found in
+/// the file); value = name.
+#[derive(Clone)]
+struct MacroEntryItem {
+    name: String,
+}
+
+impl component::searchable_list::SearchableListItem for MacroEntryItem {
+    type Value = String;
+    fn title(&self) -> SharedString {
+        self.name.clone().into()
+    }
+    fn value(&self) -> &String {
+        &self.name
+    }
+}
+
+/// The dropdown's data: the runnable macro names found in the file.
+struct MacroEntriesDelegate {
+    items: Arc<Vec<MacroEntryItem>>,
+}
+
+impl component::searchable_list::SearchableListDelegate for MacroEntriesDelegate {
+    type Item = MacroEntryItem;
+
+    fn items_count(&self, _section: usize) -> usize {
+        self.items.len()
+    }
+    fn item(&self, ix: component::IndexPath) -> Option<&Self::Item> {
+        self.items.get(ix.row)
+    }
+    fn position<V>(&self, value: &V) -> Option<component::IndexPath>
+    where
+        Self::Item: component::searchable_list::SearchableListItem<Value = V>,
+        V: PartialEq,
+    {
+        let row = self.items.iter().position(|item| *item.value() == *value)?;
+        Some(component::IndexPath { section: 0, row, column: 0 })
+    }
+}
 
 thread_local! {
     /// The macros window, while it is open (one at a time).
@@ -41,15 +83,17 @@ pub(crate) struct MacrosWindow {
     /// The modules read at open (`Arc` so the loaded list can move into
     /// the run task even if the window closes meanwhile).
     modules: Arc<Vec<ibis_vba::VbaModule>>,
-    /// The runnable macro names found in the file (standard and document
-    /// modules' `Sub`s), for the マクロ名 dropdown.
-    entries: Arc<Vec<String>>,
     /// What reading the project said when it failed.
     load_error: Option<SharedString>,
     /// The module shown (an index into `modules`).
     selected: usize,
-    /// The name to run: `Module.Sub` (the entry input).
-    entry: Entity<InputState>,
+    /// The macro picker (the found names of the file): the type-to-search
+    /// dropdown integrated in the entry box.
+    select: Entity<SelectState<MacroEntriesDelegate>>,
+    /// The picker's Confirm event, while the window lives.
+    _select_subscription: gpui::Subscription,
+    /// The chosen name to run (`Module.Sub`), kept to hand to the run.
+    chosen: Option<String>,
     /// A run is going on (the buttons while disabled).
     running: bool,
     /// The result of the last run: whether it was an error, and its text.
@@ -100,27 +144,42 @@ pub(crate) fn open_over(
         ..Default::default()
     };
     let _ = cx.open_window(options, |window, cx| {
-        let view = cx.new(|cx| MacrosWindow {
-            focus: cx.focus_handle(),
-            path,
-            editor,
-            parent: parent_window,
-            modules: Arc::new(modules),
-            entries: Arc::new(entries),
-            load_error: load_error.map(Into::into),
-            selected: 0,
-            entry: cx.new(|cx| InputState::new(window, cx).placeholder(i18n::text("macros.entry-placeholder"))),
-            running: false,
-            status: None,
-            result: None,
+        // The picker's data: the found names, as items.
+        let items = entries.iter().map(|name| MacroEntryItem { name: name.clone() }).collect::<Vec<_>>();
+        let delegate = MacroEntriesDelegate { items: Arc::new(items) };
+        let selected_index = (!entries.is_empty()).then(|| IndexPath { section: 0, row: 0, column: 0 });
+        let select = cx.new(|cx| SelectState::new(delegate, selected_index, window, cx).searchable(true));
+        let view = cx.new(|cx| {
+            // The picker's choice names the run.
+            let subscription = cx.subscribe_in(
+                &select,
+                window,
+                |this: &mut MacrosWindow,
+                 _: &Entity<SelectState<MacroEntriesDelegate>>,
+                 ev: &SelectEvent<MacroEntriesDelegate>,
+                 _: &mut Window,
+                 _: &mut Context<MacrosWindow>| {
+                    if let SelectEvent::Confirm(Some(name)) = ev {
+                        this.chosen = Some(name.clone());
+                    }
+                },
+            );
+            MacrosWindow {
+                focus: cx.focus_handle(),
+                path,
+                editor,
+                parent: parent_window,
+                modules: Arc::new(modules),
+                load_error: load_error.map(Into::into),
+                selected: 0,
+                select: select.clone(),
+                _select_subscription: subscription,
+                chosen: entries.first().cloned(),
+                running: false,
+                status: None,
+                result: None,
+            }
         });
-        // The found macro names go into the entry at once: the first one.
-        let first = view.read(cx).entries.first().cloned();
-        if let Some(first) = first {
-            view.update(cx, |this, cx| {
-                this.entry.update(cx, |input, cx| input.set_value(first, window, cx));
-            });
-        }
         let focus = view.read(cx).focus.clone();
         focus.focus(window, cx);
         cx.new(|cx| Root::new(view, window, cx))
@@ -131,12 +190,6 @@ pub(crate) fn open_over(
 pub(crate) fn open(cx: &mut App) {
     let parent = cx.active_window().and_then(|w| w.update(cx, |_, window, cx| (window.bounds(), window.display(cx).map(|d| d.id()))).ok());
     open_over(None, None, None, parent.map(|p| p.0), parent.and_then(|p| p.1), cx);
-}
-
-/// The name of the first `Sub` in a module's source (the entry the
-/// input fills with when the module is selected), as `Module.Sub`.
-fn first_sub(module_name: &str, source: &str) -> Option<String> {
-    subs_of(module_name, source).into_iter().next()
 }
 
 /// Every `Sub` name in a module's source, as `Module.Sub`: the entries a
@@ -195,7 +248,7 @@ impl MacrosWindow {
         }
         let Some(path) = self.path.clone() else { return };
         let Some(out) = self.output_path() else { return };
-        let entry = self.entry.read(cx).value().trim().to_string();
+        let entry = self.chosen.clone().unwrap_or_default();
         if entry.is_empty() {
             self.status = Some((true, i18n::text("macros.enter-an-entry")));
             return cx.notify();
@@ -281,14 +334,13 @@ impl Render for MacrosWindow {
                         .when(selected, |row| row.bg(rgb(0xe7ddff)))
                         .text_color(if selected { theme.foreground } else { theme.muted_foreground })
                         .child(format!("{} ({})", module.name, module.kind))
-                        .on_click(cx.listener(move |this, _, window, cx| {
+                        .on_click(cx.listener(move |this, _, _, cx| {
                             this.selected = index;
-                            if let Some(module) = this.modules.get(index)
-                                && let Some(entry) = first_sub(&module.name, &module.source)
-                            {
-                                this.entry.update(cx, |input, cx| {
-                                    input.set_value(entry, window, cx);
-                                });
+                            // The picker follows: its first Sub of this module.
+                            if let Some(module) = this.modules.get(index) {
+                                if let Some(entry) = subs_of(&module.name, &module.source).into_iter().next() {
+                                    this.chosen = Some(entry);
+                                }
                             }
                             cx.notify();
                         })),
@@ -314,27 +366,19 @@ impl Render for MacrosWindow {
             body = body.child(h_flex().flex_1().min_h_0().gap_3().child(list).child(preview));
         }
 
-        // The entry point input (the found names in a dropdown), and one
-        // Run button (runs, then opens).
+        // The entry point: one box, the macro picker (type-to-search
+        // dropdown of the found names), and one Run button.
         let mut row = h_flex().w_full().gap_2().items_center();
         row = row.child(div().text_size(px(12.)).flex_shrink_0().child(i18n::text("macros.run-label")));
-        if self.entries.is_empty() {
-            row = row.child(Input::new(&self.entry).small().flex_1().disabled(self.running));
-        } else {
-            row = row.child(Input::new(&self.entry).small().flex_1().disabled(self.running));
-            // The found macro names; picking one fills the entry.
-            let entries = self.entries.clone();
-            let entry = self.entry.clone();
-            row = row.child(Button::new("macros-entries").small().label(format!("{} ({}{}", i18n::text("macros.found"), entries.len(), ")")).disabled(self.running).dropdown_menu(move |menu, _, _| {
-                entries.iter().fold(menu, |menu, name| {
-                    let (name, entry) = (name.clone(), entry.clone());
-                    menu.item(PopupMenuItem::new(name.clone()).on_click(move |_, window, cx| {
-                        entry.update(cx, |input, cx| input.set_value(name.clone(), window, cx));
-                        cx.refresh_windows();
-                    }))
-                })
-            }));
-        }
+        row = row.child(
+            Select::new(&self.select)
+                .id("macros-entry")
+                .small()
+                .flex_1()
+                .disabled(self.running)
+                .placeholder(i18n::text("macros.entry-placeholder"))
+                .search_placeholder(i18n::text("macros.search-placeholder")),
+        );
         if self.running {
             body = body.child(h_flex().w_full().gap_2().items_center().child(div().flex_1()).child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(i18n::text("macros.running"))));
         } else {

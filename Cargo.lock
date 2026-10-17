@@ -3292,6 +3292,7 @@ dependencies = [
  "js-sys",
  "krilla",
  "log",
+ "lsp-types",
  "lyon_tessellation",
  "miniz_oxide 0.8.9",
  "objc",
