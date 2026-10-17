@@ -46,8 +46,6 @@ pub(crate) struct MacrosWindow {
     selected: usize,
     /// The name to run: `Module.Sub` (the entry input).
     entry: Entity<InputState>,
-    /// The confirmation asked after the user first pressed 実行.
-    awaiting_confirmation: bool,
     /// A run is going on (the buttons while disabled).
     running: bool,
     /// The result of the last run: whether it was an error, and its text.
@@ -99,7 +97,6 @@ pub(crate) fn open_over(
             load_error: load_error.map(Into::into),
             selected: 0,
             entry: cx.new(|cx| InputState::new(window, cx).placeholder(i18n::text("macros.entry-placeholder"))),
-            awaiting_confirmation: false,
             running: false,
             status: None,
             result: None,
@@ -164,14 +161,11 @@ impl MacrosWindow {
         Some(dir.join(format!("{stem}-macro-run.xlsx")))
     }
 
-    /// 実行: first press asks (the banner), the confirm button runs.
+    /// 実行: one click — run on the disk file, then open the result in
+    /// the editor (the banner's warning and the runs-on-disk note stand).
     fn run_clicked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.load_error.is_some() || self.modules.is_empty() || self.running {
             return;
-        }
-        if !self.awaiting_confirmation {
-            self.awaiting_confirmation = true;
-            return cx.notify();
         }
         let Some(path) = self.path.clone() else { return };
         let Some(out) = self.output_path() else { return };
@@ -180,8 +174,8 @@ impl MacrosWindow {
             self.status = Some((true, i18n::text("macros.enter-an-entry")));
             return cx.notify();
         }
-        self.awaiting_confirmation = false;
         self.running = true;
+        self.result = None;
         self.status = Some((false, i18n::text("macros.running")));
         cx.notify();
         let budget = ibis_vba::DEFAULT_MAX_VBA_INSTRUCTIONS;
@@ -202,6 +196,11 @@ impl MacrosWindow {
                     }
                     Err(e) => (true, e.into()),
                 });
+                if this.result.is_some() {
+                    // One click: the result workbook opens in the editor
+                    // at once, unless the app-menu path (no editor).
+                    this.open_result(cx);
+                }
                 cx.notify();
             });
         })
@@ -226,22 +225,9 @@ impl Render for MacrosWindow {
         if let Some(error) = &self.load_error {
             body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error.clone()));
         }
-        // The warning banner: shown until a run was confirmed once.
+        // The warning banner: informational, one click runs and opens.
         let mut banner = h_flex().w_full().gap_2().p_2().rounded_md().items_center().bg(rgb(0xfde68a)).text_color(rgb(0x52360c));
-        banner = banner.child(
-            div().text_size(px(12.)).flex_1().child(i18n::text(match self.awaiting_confirmation {
-                true => "macros.confirm-run",
-                false => "macros.warning",
-            })),
-        );
-        if self.awaiting_confirmation {
-            banner = banner
-                .child(Button::new("macros-cancel").small().ghost().label(i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| {
-                    this.awaiting_confirmation = false;
-                    cx.notify();
-                })))
-                .child(Button::new("macros-confirm").small().primary().label(i18n::text("macros.yes-run")).disabled(self.running).on_click(cx.listener(|this, _, window, cx| this.run_clicked(window, cx))));
-        }
+        banner = banner.child(div().text_size(px(12.)).flex_1().child(i18n::text("macros.warning")));
         body = body.child(banner);
 
         if !self.modules.is_empty() {
@@ -302,7 +288,7 @@ impl Render for MacrosWindow {
             body = body.child(h_flex().flex_1().min_h_0().gap_3().child(list).child(preview));
         }
 
-        // The entry point input, and Run (asks first).
+        // The entry point input, and one Run button (runs, then opens).
         let mut row = h_flex().w_full().gap_2().items_center();
         row = row.child(div().text_size(px(12.)).child(i18n::text("macros.run-label")));
         row = row.child(Input::new(&self.entry).small().flex_1().disabled(self.running));
@@ -310,7 +296,7 @@ impl Render for MacrosWindow {
             body = body.child(h_flex().w_full().gap_2().items_center().child(div().flex_1()).child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(i18n::text("macros.running"))));
         } else {
             let cancel_run = || Button::new("macros-window-cancel").small().ghost().label(i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, window, _| window.remove_window()));
-            let run = Button::new("macros-run").primary().small().label(i18n::text("macros.run")).disabled(self.modules.is_empty() || self.load_error.is_some()).on_click(cx.listener(|this, _, window, cx| this.run_clicked(window, cx)));
+            let run = Button::new("macros-run").primary().small().label(i18n::text("macros.run-and-open")).disabled(self.modules.is_empty() || self.load_error.is_some()).on_click(cx.listener(|this, _, window, cx| this.run_clicked(window, cx)));
             body = body.child(h_flex().w_full().gap_2().items_center().child(row).child(run).child(cancel_run()));
         }
         if let Some((error, text)) = &self.status {
@@ -318,15 +304,7 @@ impl Render for MacrosWindow {
                 false => theme.muted_foreground,
                 true => rgb(0xb3261e).into(),
             };
-            let mut status_row = h_flex().w_full().gap_2().items_center();
-            status_row = status_row.child(div().text_size(px(12.)).flex_1().text_color(color).child(text.clone()));
-            // The result sits in its own file beside the original (the run
-            // cannot touch the currently-open editor state); the button
-            // opens it in the editor again.
-            if self.result.is_some() && self.editor.is_some() {
-                status_row = status_row.child(Button::new("macros-open-result").small().label(i18n::text("macros.open-result")).on_click(cx.listener(|this, _, _, cx| this.open_result(cx))));
-            }
-            body = body.child(status_row);
+            body = body.child(div().text_size(px(12.)).text_color(color).child(text.clone()));
         }
         body
     }
