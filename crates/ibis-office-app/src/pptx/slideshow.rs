@@ -659,7 +659,7 @@ impl SlideEditor {
                 display_id: Some(display.id()),
                 titlebar: None,
                 focus: kind == ShowKind::Presenter,
-                ..Default::default()
+                window_decorations: crate::server_decorations(), ..Default::default()
             };
             let editor = editor.clone();
             match cx.open_window(options, move |window, cx| cx.new(|cx| super::show_window::ShowView::new(editor, kind, window, cx))) {

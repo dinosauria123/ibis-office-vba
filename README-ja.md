@@ -26,6 +26,7 @@
 - `version.txt` に Linux 行を追加し、`crates/ibis-office-app/build.rs` に対応づけ(`gpui-kit` → `gpui-pre-platform` 経由で、Linux は公式の `gpui-pre-linux` クレートで描画: Wayland/X11 + wgpu/Vulkan)
 - GIF 書き出しパスの `image` 依存を、すべての非 wasm デスクトップ対象に拡大(ヘッドレスの PDF/PNG エクスポート自体は macOS/Windows 専用のまま。Linux では「cannot export」と明示)
 - Ubuntu 26.10 で動作確認: Wayland 上でウィンドウが開き、.docx/.xlsx/.pptx を描画
+- ウィンドウ マネージャーに装飾を依頼(`WindowDecorations::Server`)。描画できないコンポジター(GNOME Wayland)では、アプリ自身のタイトル行に最小化/最大化/閉じるボタンを描きます
 
 ビルドに必要なパッケージ(Debian/Ubuntu):
 

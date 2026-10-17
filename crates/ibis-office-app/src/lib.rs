@@ -412,6 +412,22 @@ pub fn open_editor(document: Option<(ibis_doc_model::Presentation, SharedString)
 }
 
 /// A new editor window, its editor set up by `setup`.
+/// Whether to ask the window manager for server-side decorations (the
+/// titlebar and the buttons the WM draws): always on Linux (X11), and on
+/// the Wayland compositors that support the xdg-decoration protocol —
+/// where they do not (GNOME), the platform falls back to client
+/// decorations and the app draws its own window buttons (chrome.rs).
+pub(crate) fn server_decorations() -> Option<WindowDecorations> {
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        Some(WindowDecorations::Server)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    {
+        None
+    }
+}
+
 pub(crate) fn open_window_with(cx: &mut App, setup: impl FnOnce(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + 'static) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -419,6 +435,7 @@ pub(crate) fn open_window_with(cx: &mut App, setup: impl FnOnce(&mut SlideEditor
             size(px(1280.), px(800.)),
             cx,
         ))),
+        window_decorations: server_decorations(),
         ..Default::default()
     };
     cx.open_window(options, |window, cx| {

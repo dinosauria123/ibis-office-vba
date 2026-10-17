@@ -3246,13 +3246,13 @@ impl SlideEditor {
         // document with the sidebar on its right, and the status bar.
         if !self.has_document {
             window.set_window_title(&crate::shell::start_view::start_title());
-            return d.child(self.render_title_row(cx)).child(self.render_start_view(cx));
+            return d.child(self.render_title_row(window, cx)).child(self.render_start_view(cx));
         }
         let compact = self.chrome_compact;
         let focus = self.is_focus_mode();
         let body = with_format!(self, render_body(self, window, cx));
         let sidebar = if focus { None } else { self.render_sidebar(window, cx) };
-        d.when(!compact && !focus, |d| d.child(self.render_title_row(cx)).child(self.render_menu_bar(window, cx)))
+        d.when(!compact && !focus, |d| d.child(self.render_title_row(window, cx)).child(self.render_menu_bar(window, cx)))
             .when(!focus, |d| d.child(self.render_toolbar(window, cx)))
             .child(
                 div()

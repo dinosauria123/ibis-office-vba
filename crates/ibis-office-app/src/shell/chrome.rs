@@ -461,6 +461,47 @@ fn menu_icon(name: &'static str) -> Icon {
 
 /// A handler as a click listener: it reaches the editor through a weak
 /// handle, so it works in popups too.
+/// The window buttons (minimize, maximize and close) Linux draws in the
+/// title bar itself when the window manager does not provide server-side
+/// decorations (GNOME Wayland's: the app requests Server, the platform
+/// falls back to Client, and gpui says so). `None` where the system
+/// draws the buttons (macOS, Windows) or the WM does (X11, KDE Wayland).
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn titlebar_window_controls(window: &Window) -> Option<AnyElement> {
+    use gpui_kit::Decorations;
+    if !matches!(window.window_decorations(), Decorations::Client { .. }) {
+        return None;
+    }
+    let color: Hsla = rgb(ICON).into();
+    let button = |id: &'static str, icon_name: &'static str, click: fn(&ClickEvent, &mut Window, &mut App)| {
+        h_flex()
+            .id(id)
+            .size(px(32.))
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .cursor_pointer()
+            .hover(|s| s.bg(hsla(0.0, 0.0, 0.27, 0.08)))
+            .child(icon(icon_name, 18.0, color))
+            .on_click(click)
+    };
+    Some(
+        h_flex()
+            .gap(px(2.))
+            .pl(px(4.))
+            .child(button("window-minimize", "remove", |_, window, _| window.minimize_window()))
+            .child(button("window-maximize", "crop_square", |_, window, _| window.zoom_window()))
+            .child(button("window-close", "close", |_, window, _| window.remove_window()))
+            .into_any_element(),
+    )
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn titlebar_window_controls(_window: &Window) -> Option<AnyElement> {
+    None
+}
+
 fn listener(editor: &WeakEntity<SlideEditor>, handler: &Handler) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     let (editor, handler) = (editor.clone(), handler.clone());
     move |_, window, cx| {
@@ -599,7 +640,7 @@ impl SlideEditor {
     /// The title row: the app's icon, undo and redo, the slide show (a
     /// presentation), the file name in the middle, comments, the outline
     /// (a document) and the sidebar.
-    pub(crate) fn render_title_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_title_row(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = cx.entity().downgrade();
         let row = h_flex().h(px(36.)).flex_shrink_0().pl(px(14.)).pr(px(12.)).gap(px(8.)).items_center().bg(rgb(APP_BG)).text_color(rgb(TEXT));
         if !self.has_document {
@@ -608,6 +649,7 @@ impl SlideEditor {
                 .child(img(app_logo()).h(px(LOGO_HEIGHT)).w(px(LOGO_HEIGHT * LOGO_ASPECT)))
                 .child(div().flex_1())
                 .child(title_button("help", "help", "_shell.help", None, &editor))
+                .when_some(titlebar_window_controls(window), |row, controls| row.child(controls))
                 .into_any_element();
         }
         let (app_icon, app_color) = match self.kind() {
@@ -670,6 +712,7 @@ impl SlideEditor {
                     .child(div().text_size(px(15.)).px(px(6.)).truncate().child(name)),
             )
             .child(buttons(h_flex()))
+            .when_some(titlebar_window_controls(window), |row, controls| row.child(controls))
             .into_any_element()
     }
 

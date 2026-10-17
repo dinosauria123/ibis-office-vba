@@ -96,6 +96,7 @@ pub(crate) fn open_over(
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         display_id: display,
         titlebar: Some(TitlebarOptions { title: Some(title.clone()), ..Default::default() }),
+        window_decorations: crate::server_decorations(),
         ..Default::default()
     };
     let _ = cx.open_window(options, |window, cx| {

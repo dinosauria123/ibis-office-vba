@@ -26,6 +26,7 @@ The upstream tree only builds for macOS, Windows and the web. This fork adds:
 - A `Linux` line in `version.txt` and the mapping in `crates/ibis-office-app/build.rs` (through `gpui-kit` → `gpui-pre-platform`, Linux renders with the official `gpui-pre-linux` crate: Wayland/X11 UI + wgpu/Vulkan graphics).
 - The GIF export path's `image` dependency now compiles on non-wasm desktop targets (the headless PDF/PNG exporter itself remains macOS/Windows; Linux answers with a clear "cannot export" message).
 - Verified on Ubuntu 26.10: the window opens over Wayland and .docx/.xlsx/.pptx documents render.
+- The app asks the window manager for decorations (`WindowDecorations::Server`); where the compositor cannot draw them (GNOME Wayland), the app's own title bar draws minimize/maximize/close.
 
 Build dependencies (Debian/Ubuntu):
 
