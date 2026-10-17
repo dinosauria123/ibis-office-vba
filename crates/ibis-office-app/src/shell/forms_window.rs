@@ -343,8 +343,9 @@ impl Render for FormWindow {
             };
             plane = plane.child(element);
         }
-        body = body
-            .child(v_flex().id("form-plane-scroll").flex_1().min_h_0().items_start().overflow_y_scroll().child(plane));
+        panel = panel.child(
+            v_flex().id("form-plane-scroll").flex_1().min_h_0().items_start().overflow_y_scroll().child(plane),
+        );
         // The status (what ran, what failed) and the window's close.
         let (message, color) = match &self.status {
             Some((true, text)) => (text.clone(), rgb(0xb3261e).into()),

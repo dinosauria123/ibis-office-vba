@@ -498,6 +498,12 @@ fn titlebar_window_controls(window: &Window) -> Option<AnyElement> {
 }
 
 
+/// A title row's drag bookkeeping (press, then move: the window moves).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct TitleRowDrag {
+    pressed: bool,
+}
+
 /// A floating dialog's own titlebar: client-decorated windows need it
 /// (the WM draws no bar of its own), the app's main title row already
 /// covers the editor. The bar carries the drag (the pointer's move on
@@ -649,9 +655,24 @@ impl SlideEditor {
     /// The title row: the app's icon, undo and redo, the slide show (a
     /// presentation), the file name in the middle, comments, the outline
     /// (a document) and the sidebar.
-    pub(crate) fn render_title_row(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_title_row(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = cx.entity().downgrade();
         let row = h_flex().h(px(36.)).flex_shrink_0().pl(px(14.)).pr(px(12.)).gap(px(8.)).items_center().bg(rgb(APP_BG)).text_color(rgb(TEXT));
+        // The row drags the window: press here, then move — the
+        // platform picks the window up (`Window::start_window_move`;
+        // the Wayland hit-test never consults control areas, so telling
+        // it which areas are the window's does nothing here — the
+        // floating dialogs' TitleBar carries the same wiring).
+        let should_move = window.use_state(cx, |_, _| TitleRowDrag::default());
+        let row = row
+            .on_mouse_down(gpui_kit::MouseButton::Left, window.listener_for(&should_move, |st: &mut TitleRowDrag, _, _, _| st.pressed = true))
+            .on_mouse_up(gpui_kit::MouseButton::Left, window.listener_for(&should_move, |st: &mut TitleRowDrag, _, _, _| st.pressed = false))
+            .on_mouse_move(window.listener_for(&should_move, |st: &mut TitleRowDrag, _, window, _| {
+                if st.pressed {
+                    st.pressed = false;
+                    window.start_window_move();
+                }
+            }));
         if !self.has_document {
             // The start view: the app's logo (開く and 新規作成 are in the view).
             let row = row.window_control_area(gpui_kit::WindowControlArea::Drag);

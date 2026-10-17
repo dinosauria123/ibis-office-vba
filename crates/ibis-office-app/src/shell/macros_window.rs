@@ -134,22 +134,23 @@ pub(crate) fn open_over(
         Some(Err(e)) => (Vec::new(), Some(e.into())),
         None => (Vec::new(), Some(i18n::text("macros.open-a-file"))),
     };
-    // The found names: every parameterless `Sub` of the standard and
-    // document modules, then the file's forms (the 実行 of a form
-    // opens its window).
+    // The found names: the file's forms come first (the 実行 of a
+    // form opens its window — the host's own dialog lists the forms at
+    // the top of the names), then every parameterless `Sub` of the
+    // standard and document modules.
+    let mut it: Vec<MacroEntryItem> = Vec::new();
+    for form in &forms {
+        let title: SharedString =
+            i18n::format("macros.form-suffix", &[("name", &form.name)]).into();
+        it.push(MacroEntryItem { name: form.name.clone(), is_form: true, title });
+    }
     let macro_names: Vec<String> = modules
         .iter()
         .filter(|m| m.kind != "class")
         .flat_map(|m| subs_of(&m.name, &m.source))
         .collect();
-    let mut it: Vec<MacroEntryItem> = macro_names
-        .iter()
-        .map(|name| MacroEntryItem { name: name.clone(), is_form: false, title: name.clone().into() })
-        .collect();
-    for form in &forms {
-        let title: SharedString =
-            i18n::format("macros.form-suffix", &[("name", &form.name)]).into();
-        it.push(MacroEntryItem { name: form.name.clone(), is_form: true, title });
+    for name in &macro_names {
+        it.push(MacroEntryItem { name: name.clone(), is_form: false, title: name.clone().into() });
     }
     let entries = Arc::new(it);
     let (width, height) = (px(560.), px(420.));

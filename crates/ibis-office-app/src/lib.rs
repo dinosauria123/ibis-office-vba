@@ -418,6 +418,12 @@ pub fn open_editor(document: Option<(ibis_doc_model::Presentation, SharedString)
 /// where they do not (GNOME), the platform falls back to client
 /// decorations and the app draws its own window buttons (chrome.rs).
 pub(crate) fn server_decorations() -> Option<WindowDecorations> {
+    /// `IBIS_FORCE_CLIENT_DECOR`: the layout probe (`--export form-ui`)
+    /// forcing the client-side answer headlessly (a compositor's
+    /// fallback can be neither asked nor granted there).
+    if std::env::var_os("IBIS_FORCE_CLIENT_DECOR").is_some() {
+        return Some(WindowDecorations::Client);
+    }
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         Some(WindowDecorations::Server)
@@ -592,6 +598,19 @@ fn run_export(args: &Args, format: &str) -> Result<(), String> {
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "start".into());
                 return ui_snapshot::run(document, &out_dir, &stem, args.steps.as_deref().unwrap_or("start"));
+            }
+            "form-ui" => {
+                let package = args
+                    .path
+                    .as_deref()
+                    .ok_or("--export form-ui needs a macro workbook")?;
+                let out_dir = args.out_dir.clone().unwrap_or_else(|| ".".into());
+                std::fs::create_dir_all(&out_dir).map_err(|e| format!("{}: {e}", out_dir.display()))?;
+                let stem = package
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "start".into());
+                return ui_snapshot::run_forms(package.to_path_buf(), &out_dir, &stem);
             }
             "png" => export::Format::Png,
             "pdf" => export::Format::Pdf,

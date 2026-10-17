@@ -193,3 +193,53 @@ pub(crate) fn run(
     }
     Ok(())
 }
+
+/// The forms' window for one file (the first UserForm, as the マクロ
+/// dialog's 実行 opens it), drawn headless (`--export form-ui`). With
+/// `IBIS_FORCE_CLIENT_DECOR` the window runs on client-side
+/// decorations, so the app's own titlebar shows where it lands.
+///
+/// ```text
+/// ibisOffice --export form-ui <file.xlsm>
+/// ```
+pub(crate) fn run_forms(package: std::path::PathBuf, out: &std::path::Path, stem: &str) -> Result<(), String> {
+    let forms: Vec<ibis_vba::forms::UserFormDef> = ibis_vba::forms::read_userforms(&package)
+        .map_err(|e| e)?;
+    let Some(first) = forms.into_iter().next() else {
+        return Err(format!("{}: no UserForms are stored in it", package.display()));
+    };
+    let (_platform, mut cx) = crate::export::headless_app();
+    cx.allow_parking();
+    cx.update(crate::init);
+    let handles: std::cell::RefCell<Vec<gpui::AnyWindowHandle>> = Default::default();
+    cx.update(|app| {
+        crate::shell::macros_window::open_over(
+            Some(package.clone()),
+            None,
+            None,
+            None,
+            None,
+            app,
+        );
+    });
+    cx.run_until_parked();
+    cx.update(|app| {
+        crate::shell::forms_window::open_form(None, None, None, package.clone(), first, app)
+    });
+    cx.run_until_parked();
+    // The window handles: the two thread-locals hold them; the open in
+    // order was macros then forms, so capture both by re-asking the
+    // app's window list.
+    let windows = cx.update(|app| app.window_list());
+    for (n, handle) in windows.iter().enumerate() {
+        for _ in 0..3 {
+            cx.run_until_parked();
+            cx.update_window(*handle, |_, window, _| window.refresh()).ok();
+        }
+        let image = cx.capture_screenshot(*handle).map_err(|e| e.to_string())?;
+        let target = out.join(format!("{stem}-dlg-{:02}.png", n + 1));
+        image.save(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+        println!("captured {}", target.display());
+    }
+    Ok(())
+}
