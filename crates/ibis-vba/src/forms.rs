@@ -834,7 +834,7 @@ mod run_tests {
             .collect();
         state.insert(
             "TextBox1".to_string(),
-            FormValue { text: "typed in the box".into(), checked: false },
+            FormValue { text: "typed in the box".into(), checked: false, list: Vec::new(), selected: None },
         );
         let session = FormSession { package: package.clone(), workbook: None };
         let output = std::env::temp_dir().join("ibis-vba-form-run.xlsx");
@@ -870,5 +870,61 @@ mod run_tests {
         let run2 = run_form_event(&session2, form, "CommandButton1_Click", &run1.state, &second)
             .expect("click");
         assert_eq!(run2.state.get("Label1").unwrap().text, "hello from vba", "{run2:#?}");
+    }
+}
+
+#[cfg(test)]
+mod crud_tests {
+    use super::*;
+    use super::run::{FormSession, FormValue, run_form_event};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn fixture() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test/benchmark/vba-userform-demo-crud.xlsm")
+    }
+
+    #[test]
+    fn runs_the_crud_form() {
+        let package = fixture();
+        let forms = read_userforms(&package).expect("forms");
+        let form = &forms[0];
+        assert_eq!(form.name, "oUserForm");
+        let mut state: HashMap<String, FormValue> = form
+            .controls
+            .iter()
+            .map(|c| (c.name.clone(), FormValue::default()))
+            .collect();
+        // TableData at A4:C7: Mr/Louis, Mrs/Dion, Dr/Charles (3 rows).
+        let session = FormSession { package: package.clone(), workbook: None };
+        let out = std::env::temp_dir().join("ibis-vba-crud-init.xlsx");
+        let run = run_form_event(&session, form, "UserForm_Initialize", &state, &out).expect("initialize");
+        // Row 50+ probes (the list plane's cells):
+
+        let list = &run.state.get("lbList").unwrap().list;
+        assert_eq!(list.len(), 3, "three table rows: {list:?}");
+        assert!(list[0].contains("Louis"), "row one: {list:?}");
+        // The Create: the texts in and a click.
+        state = run.state.clone();
+        state.insert("txtTitle".to_string(), FormValue { text: "Ms".into(), checked: false, list: list.clone(), selected: None });
+        state.insert("txtName".into(), FormValue { text: "Ada".into(), checked: false, list: list.clone(), selected: None });
+        state.insert("txtAge".into(), FormValue { text: "39".into(), checked: false, list: list.clone(), selected: None });
+        let out2 = std::env::temp_dir().join("ibis-vba-crud-create.xlsx");
+        let session = FormSession { package: package.clone(), workbook: Some(out.clone()) };
+        let run2 = run_form_event(&session, form, "cmdCreate_Click", &state, &out2).expect("create");
+        let list2 = &run2.state.get("lbList").unwrap().list;
+        assert_eq!(list2.len(), 4, "a row added: {list2:?}");
+        assert!(list2[3].contains("Ada"), "the new row's name: {list2:?}");
+        // The Delete: one row off.
+        let run3 = run_form_event(
+            &FormSession { package: package.clone(), workbook: Some(out2.clone()) },
+            form,
+            "cmdDelete_Click",
+            &run2.state,
+            &out,
+        )
+        .expect("delete");
+        let list3 = &run3.state.get("lbList").unwrap().list;
+        assert_eq!(list3.len(), 3, "a row deleted: {list3:?}");
     }
 }

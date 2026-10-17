@@ -110,7 +110,11 @@ fn compile_all(
     }
     let (mut programs, mut skipped) = (Vec::new(), Vec::new());
     for module in modules {
-        let compiled = elixcee::parser::parse(&module.source).map(|mut program| {
+        // An exported module may declare dotted, object-library types
+        // (`As MSForms.ReturnBoolean`); elixcee's parser stops on them,
+        // so a Variant stand-in goes in first.
+        let scrubbed = forms::run::scrub_unknown_types(&module.source);
+        let compiled = elixcee::parser::parse(&scrubbed).map(|mut program| {
             if module.kind == "class" {
                 // elixcee's parser cannot tell classes from standard
                 // modules (the stream form has no header): mark them and
@@ -183,8 +187,36 @@ pub fn run_macro_bounded(
     let sheets = vm
         .load_workbook_file(&package_path.display().to_string())
         .map_err(|e| format!("cannot load the workbook for VBA: {e}"))?;
-    vm.run_sub_multi(&programs, entry)
-        .map_err(|e| format!("the macro failed: {e}"))?;
+    vm.run_sub_multi(&programs, entry).map_err(|e| {
+        // A not-found entry the file actually declares names the
+        // modules that did not compile (their declarations are there;
+        // the parse stopped before them).
+        if e.contains("not found") {
+            let wanted = entry.split('.').next_back().unwrap_or(entry);
+            let owners: Vec<String> = crate::read_modules(package_path)
+                .unwrap_or_default()
+                .iter()
+                .filter(|m| !programs.iter().any(|(name, _)| name.eq_ignore_ascii_case(&m.name)))
+                .filter(|m| {
+                    m.source.to_lowercase().contains(&format!(
+                        "sub {}(",
+                        wanted.to_lowercase()
+                    ))
+                })
+                .map(|m| m.name.clone())
+                .collect();
+            if !owners.is_empty() {
+                let word = if owners.len() == 1 { "module" } else { "modules" };
+                return format!(
+                    "the macro failed: {e} (the {} {word} declaring it did not compile — run it through the form window, or simplify the module's declarations)",
+                    owners.join(", ")
+                );
+            }
+            format!("the macro failed: {e}")
+        } else {
+            format!("the macro failed: {e}")
+        }
+    })?;
     let messages = [vm.take_messages(), vm.take_debug_output()].concat();
     elixcee::save_workbook(&vm, &output_path.display().to_string())
         .map_err(|e| format!("cannot save the result: {e}"))?;

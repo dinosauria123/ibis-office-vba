@@ -111,6 +111,8 @@ pub(crate) fn open_form(
                             ibis_vba::forms::FormValue {
                                 text: c.value.clone().unwrap_or_default(),
                                 checked: false,
+                                list: Vec::new(),
+                                selected: None,
                             },
                         )
                     })
@@ -267,6 +269,58 @@ impl Render for FormWindow {
                             })),
                     )
                         .into_any_element()
+                }
+                "ListBox" => {
+                    // The plane's rows (the last run's list) and a
+                    // double-click that runs the control's own
+                    // `<Control>_DblClick`, when the module has one.
+                    let name = control.name.clone();
+                    let rows: Vec<SharedString> = self
+                        .state
+                        .get(&control.name)
+                        .map(|v| {
+                            v.list
+                                .iter()
+                                .map(|line| line.replace('\t', "  ").into())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let selected = self
+                        .state
+                        .get(&control.name)
+                        .and_then(|v| v.selected)
+                        .unwrap_or(usize::MAX);
+                    let mut list = div()
+                        .size_full()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.background)
+                        .text_size(px(11.))
+                        .overflow_hidden();
+                    for (ix, line) in rows.iter().enumerate() {
+                        let row_name = control.name.clone();
+                        let dbl_name = name.clone();
+                        list = list.child(
+                            div()
+                                .id(SharedString::from(format!("{row_name}-row-{ix}")))
+                                .px_1()
+                                .when(ix == selected, |d| d.bg(theme.accent).text_color(theme.accent_foreground))
+                                .hover(|d| d.bg(theme.secondary))
+                                .on_click(cx.listener(
+                                    move |this, event: &gpui_kit::ClickEvent, window, cx| {
+                                        if event.click_count() != 2 {
+                                            return;
+                                        }
+                                        let dbl: &'static str =
+                                            Box::leak(format!("{dbl_name}_DblClick").into_boxed_str());
+                                        this.perform_run(dbl, window, cx);
+                                    },
+                                ))
+                                .child(line.clone()),
+                        );
+                    }
+                    base.child(list).into_any_element()
                 }
                 other => base
                     .child(

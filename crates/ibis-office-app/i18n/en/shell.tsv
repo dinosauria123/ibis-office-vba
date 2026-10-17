@@ -736,3 +736,5 @@ macros.form-open	Show the form
 macros.run-failed	The run failed
 macros.form-running	Form…
 macros.controls	Controls
+macros.note	{what} on this form
+macros.search-placeholder	Search macros and forms

@@ -734,3 +734,5 @@ macros.form-open	フォームを表示
 macros.run-failed	実行に失敗しました
 macros.form-running	フォーム…
 macros.controls	コントロール
+macros.note	このフォームの{what}
+macros.search-placeholder	マクロとフォームを検索
