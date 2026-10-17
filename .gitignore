@@ -6,3 +6,4 @@
 /test/private/
 __pycache__/
 .DS_Store
+test/benchmark/*-macro-run.xlsx
