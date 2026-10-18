@@ -823,9 +823,45 @@ impl SlideEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_read_as(path, read, slide, None, window, cx)
+    }
+
+    /// Shows what `snapshot` holds while the window keeps editing the
+    /// original file: a macro run's result appears in place, the disk
+    /// file untouched until 上書き保存 writes it.
+    pub(crate) fn open_snapshot(&mut self, snapshot: std::path::PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let keep = self.path.clone();
+        let read_path = snapshot.clone();
+        self.open_read_as(snapshot, move || crate::read_file(&read_path), None, keep, window, cx);
+    }
+
+    /// `open_read`, with the window's edit target kept as `keep_path`
+    /// (`None`: the read path). A macro run's snapshot shows in place
+    /// this way: the display holds the run's result while 上書き保存
+    /// still writes the original.
+    pub(crate) fn open_read_as(
+        &mut self,
+        path: std::path::PathBuf,
+        read: impl FnOnce() -> Result<crate::Loaded, String> + Send + 'static,
+        slide: Option<usize>,
+        keep_path: Option<std::path::PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.commit_edit(window, cx);
-        let name: SharedString = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().into();
-        let kind = path.extension().and_then(|e| e.to_str()).and_then(ibis_pptx::Kind::from_extension);
+        let name: SharedString = keep_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .or_else(|| path.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_default()
+            .into();
+        let kind = keep_path
+            .as_ref()
+            .and_then(|p| p.extension())
+            .or_else(|| path.extension())
+            .and_then(|e| e.to_str())
+            .and_then(ibis_pptx::Kind::from_extension);
         match kind {
             Some(kind) if !self.has_document => self.begin_loading(kind, name.clone(), window, cx),
             _ => self.set_status(crate::shell::i18n::format("file.opening", &[("name", &name)]), cx),
@@ -852,13 +888,15 @@ impl SlideEditor {
                     } else {
                         this.load(loaded.presentation, name, window, cx);
                         this.source = Some(loaded.source);
-                        this.path = Some(path.clone());
+                        this.path = Some(keep_path.clone().unwrap_or_else(|| path.clone()));
                         this.protection_password = loaded.password;
                     }
                     if let Some(number) = slide {
                         this.show_slide_number(number, window, cx);
                     }
-                    this.recent_files = crate::shell::recent_files::add(&path);
+                    if keep_path.is_none() {
+                        this.recent_files = crate::shell::recent_files::add(&path);
+                    }
                     crate::timing::document_loaded(window);
                     if path.extension().and_then(|e| e.to_str()).is_some_and(ibis_pptx::is_slideshow) {
                         this.start_slideshow(window, cx);

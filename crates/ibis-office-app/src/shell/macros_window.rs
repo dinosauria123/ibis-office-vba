@@ -281,14 +281,22 @@ impl MacrosWindow {
         self.status = Some((false, i18n::text("macros.running")));
         cx.notify();
         let budget = ibis_vba::DEFAULT_MAX_VBA_INSTRUCTIONS;
-        // The run reports what it did (its MsgBox/Debug.Print text);
-        // nothing is written anywhere.
-        let bounded = ibis_vba::run_macro_bounded(&path, &entry, None, budget);
+        // The run's workbook state goes to a snapshot in the temp dir:
+        // the original file stays as it is on disk, the editor shows the
+        // result in place (上書き保存 writes the original), and the
+        // snapshot itself is the only file the run touches.
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "out".into());
+        let snapshot = std::env::temp_dir().join(format!("ibis-macro-view-{stem}.xlsx"));
+        let bounded = ibis_vba::run_macro_bounded(&path, &entry, Some(&snapshot), budget);
         let finished = cx.background_executor().spawn(async move { bounded });
         cx.spawn_in(window, async move |this, cx| {
             let result = finished.await;
             let _ = this.update(cx, |this, cx| {
                 this.running = false;
+                let is_ok = result.is_ok();
                 this.status = Some(match result {
                     Ok(report) => {
                         let mut text = String::from(i18n::text("macros.done-simple"));
@@ -303,6 +311,19 @@ impl MacrosWindow {
                     }
                     Err(e) => (true, e.into()),
                 });
+                // The result shows in the editor in place (the file the
+                // window edits stays the original) when the dialog came
+                // from an editor window.
+                if is_ok
+                    && let (Some(editor), Some(parent)) = (this.editor.clone(), this.parent)
+                {
+                    let snapshot = snapshot.clone();
+                    cx.defer(move |cx| {
+                        let _ = parent.update(cx, |_, window, cx| {
+                            let _ = editor.update(cx, |e, cx| e.open_snapshot(snapshot, window, cx));
+                        });
+                    });
+                }
                 cx.notify();
             });
         })
