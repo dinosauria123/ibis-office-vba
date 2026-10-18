@@ -101,8 +101,6 @@ pub(crate) struct MacrosWindow {
     running: bool,
     /// The result of the last run: whether it was an error, and its text.
     status: Option<(bool, SharedString)>,
-    /// The workbook of the last run, for 実行結果を開く.
-    result: Option<PathBuf>,
     /// The source the 編集 button unfolds (the chosen entry's module).
     show_source: bool,
 }
@@ -207,7 +205,6 @@ pub(crate) fn open_over(
                 chosen,
                 running: false,
                 status: None,
-                result: None,
                 show_source: false,
             }
         });
@@ -249,28 +246,6 @@ fn subs_of(module_name: &str, source: &str) -> Vec<String> {
 }
 
 impl MacrosWindow {
-    /// 実行結果を開く: the output workbook of the last run (a file beside
-    /// the original) opens in the editor the user came from.
-    fn open_result(&self, cx: &mut Context<Self>) {
-        let (Some(result), Some(editor), Some(parent)) = (&self.result, self.editor.clone(), self.parent) else {
-            return;
-        };
-        let result = result.clone();
-        cx.defer(move |cx| {
-            let _ = parent.update(cx, |_, window, cx| {
-                let _ = editor.update(cx, |e, cx| e.open_path(result, None, window, cx));
-            });
-        });
-    }
-
-    /// The path the run saves its copy beside.
-    fn output_path(&self) -> Option<PathBuf> {
-        let path = self.path.as_ref()?;
-        let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "out".into());
-        Some(dir.join(format!("{stem}-macro-run.xlsx")))
-    }
-
     /// 実行: one button for both kinds — a form's entry opens its
     /// window (values plane, events), a macro runs on the disk file and
     /// opens the result.
@@ -302,22 +277,25 @@ impl MacrosWindow {
             return cx.notify();
         }
         let Some(path) = self.path.clone() else { return };
-        let Some(out) = self.output_path() else { return };
         self.running = true;
-        self.result = None;
         self.status = Some((false, i18n::text("macros.running")));
         cx.notify();
         let budget = ibis_vba::DEFAULT_MAX_VBA_INSTRUCTIONS;
-        let bounded = ibis_vba::run_macro_bounded(&path, &entry, &out, budget);
+        // The run reports what it did (its MsgBox/Debug.Print text);
+        // nothing is written anywhere.
+        let bounded = ibis_vba::run_macro_bounded(&path, &entry, None, budget);
         let finished = cx.background_executor().spawn(async move { bounded });
         cx.spawn_in(window, async move |this, cx| {
             let result = finished.await;
             let _ = this.update(cx, |this, cx| {
                 this.running = false;
-                this.result = result.as_ref().ok().map(|_| out.clone());
                 this.status = Some(match result {
                     Ok(report) => {
-                        let mut text = i18n::format("macros.done", &[("path", &report.saved)]);
+                        let mut text = String::from(i18n::text("macros.done-simple"));
+                        if !report.messages.is_empty() {
+                            let joined = report.messages.join(" / ");
+                            text = format!("{text}: {joined}");
+                        }
                         if !report.skipped.is_empty() {
                             text += &format!(" ({})", i18n::format("macros.skipped", &[("count", &report.skipped.len().to_string())]));
                         }
@@ -325,11 +303,6 @@ impl MacrosWindow {
                     }
                     Err(e) => (true, e.into()),
                 });
-                if this.result.is_some() {
-                    // One click: the result workbook opens in the editor
-                    // at once, unless the app-menu path (no editor).
-                    this.open_result(cx);
-                }
                 cx.notify();
             });
         })
@@ -341,7 +314,7 @@ impl MacrosWindow {
     fn source_of(&self) -> String {
         if let Some((name, is_form)) = &self.chosen {
             if *is_form {
-                return i18n::format("macros.form-suffix", &[("name", name)]).to_string() + &format!("\n{}", i18n::text("macros.runs-on-disk"));
+                return i18n::format("macros.form-suffix", &[("name", name)]).to_string();
             }
             if let Some(module) = self.modules.iter().find(|m| {
                 format!("{}.", m.name) == format!("{}.{}", name.split('.').next().unwrap_or(""), name.split('.').next().unwrap_or(""))
@@ -497,8 +470,7 @@ impl Render for MacrosWindow {
                                 ),
                         ),
                 )
-                .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(i18n::text("macros.description")))
-                .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(i18n::text("macros.runs-on-disk"))),
+                .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(i18n::text("macros.description"))),
         );
 
         // The status and the window's bottom row.

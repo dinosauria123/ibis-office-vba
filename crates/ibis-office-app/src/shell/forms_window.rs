@@ -194,8 +194,7 @@ impl FormWindow {
                     Ok(run) => {
                         this.state = run.state.clone();
                         this.workbook = Some(run.file.clone());
-                        let text = i18n::format("macros.done", &[("path", &run.file.display().to_string())]);
-                        this.status = Some((false, text.into()));
+                        this.status = Some((false, i18n::text("macros.done-simple").into()));
                     }
                     Err(err) if err.contains(&event_marker) => {
                         this.status = None;

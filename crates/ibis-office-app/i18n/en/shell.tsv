@@ -749,3 +749,4 @@ macros.options	Options (P)…
 macros.form-singular	Form
 macros.form-suffix	Form: {name}
 forms.save-back	Save over the original
+macros.done-simple	Ran

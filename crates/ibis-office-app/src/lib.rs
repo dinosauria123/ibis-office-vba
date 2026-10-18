@@ -874,13 +874,15 @@ pub fn run_native() {
             let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "out".into());
             dir.join(format!("{stem}-macro-run.xlsx"))
         });
-        match ibis_vba::run_macro_bounded(&path, entry, &out, args.max_vba_instructions_or_default()) {
+        match ibis_vba::run_macro_bounded(&path, entry, Some(&out), args.max_vba_instructions_or_default()) {
             Ok(report) => {
                 eprintln!("ibisOffice: ran {entry}; sheets {:?}", report.sheets);
                 for skipped in &report.skipped {
                     eprintln!("ibisOffice: skipped {skipped}");
                 }
-                eprintln!("ibisOffice: saved {}", report.saved);
+                if let Some(saved) = &report.saved {
+                    eprintln!("ibisOffice: saved {saved}");
+                }
                 std::process::exit(0);
             }
             Err(err) => {

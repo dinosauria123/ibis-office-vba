@@ -144,8 +144,9 @@ pub struct RunReport {
     pub messages: Vec<String>,
     /// The modules the run went on without: those elixcee could not compile.
     pub skipped: Vec<String>,
-    /// Path the result workbook was written to.
-    pub saved: String,
+    /// Where the result workbook was written (`None`: the run reported
+    /// its messages only and wrote nothing).
+    pub saved: Option<String>,
 }
 
 /// A run's default instruction budget: elixcee's own deterministic
@@ -162,7 +163,7 @@ pub fn run_macro(
     entry: &str,
     output_path: &std::path::Path,
 ) -> Result<RunReport, String> {
-    run_macro_bounded(package_path, entry, output_path, DEFAULT_MAX_VBA_INSTRUCTIONS)
+    run_macro_bounded(package_path, entry, Some(output_path), DEFAULT_MAX_VBA_INSTRUCTIONS)
 }
 
 /// [`run_macro`] with a caller-set instruction budget: `Some(n)` caps one
@@ -172,7 +173,7 @@ pub fn run_macro(
 pub fn run_macro_bounded(
     package_path: &std::path::Path,
     entry: &str,
-    output_path: &std::path::Path,
+    output_path: Option<&std::path::Path>,
     max_instructions: Option<u64>,
 ) -> Result<RunReport, String> {
     let (programs, skipped) = compile_all(package_path)?;
@@ -218,9 +219,15 @@ pub fn run_macro_bounded(
         }
     })?;
     let messages = [vm.take_messages(), vm.take_debug_output()].concat();
-    elixcee::save_workbook(&vm, &output_path.display().to_string())
-        .map_err(|e| format!("cannot save the result: {e}"))?;
-    Ok(RunReport { sheets, messages, skipped, saved: output_path.display().to_string() })
+    let saved = match output_path {
+        Some(out) => {
+            elixcee::save_workbook(&vm, &out.display().to_string())
+                .map_err(|e| format!("cannot save the result: {e}"))?;
+            Some(out.display().to_string())
+        }
+        None => None,
+    };
+    Ok(RunReport { sheets, messages, skipped, saved })
 }
 
 
